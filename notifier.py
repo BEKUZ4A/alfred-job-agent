@@ -2,14 +2,38 @@ import httpx
 import urllib.parse
 import os
 import logging
+from datetime import datetime
 from typing import Dict, Any, List
-from config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, CALLMEBOT_USERNAME
+from config import (
+    TELEGRAM_BOT_TOKEN,
+    TELEGRAM_CHAT_ID,
+    CALLMEBOT_USERNAME,
+    TASHKENT_TZ,
+    CALL_START_HOUR,
+    CALL_END_HOUR,
+    MAX_MATCHES_PER_SCAN
+)
 from voice import generate_voice_message
 
 logger = logging.getLogger("Alfred.Notifier")
 
+def is_call_allowed_now() -> bool:
+    """
+    Qo'ng'iroq qilish vaqti (Toshkent vaqti bilan 8:00 dan 20:00 gacha) ekanligini tekshirish.
+    Kechasi (20:00 dan ertalab 08:00 gacha) bezovta qilmaslik uchun qo'ng'iroq to'xtatiladi.
+    """
+    now = datetime.now(TASHKENT_TZ)
+    current_hour = now.hour
+    is_allowed = CALL_START_HOUR <= current_hour < CALL_END_HOUR
+    if not is_allowed:
+        logger.info(f"Hozir soat {now.strftime('%H:%M')} (ruxsat etilgan vaqt: {CALL_START_HOUR}:00 - {CALL_END_HOUR}:00). Qo'ng'iroq bekor qilindi.")
+    return is_allowed
+
 async def send_callmebot_call(text: str = "Sizga mos yangi vakansiya chiqdi"):
-    """CallMeBot API orqali Telegramdan qo'ng'iroq qilish"""
+    """CallMeBot API orqali Telegramdan qo'ng'iroq qilish (faqat 8:00 dan 20:00 oralig'ida)"""
+    if not is_call_allowed_now():
+        return
+
     if not CALLMEBOT_USERNAME:
         logger.info("CallMeBot username kiritilmagan, qo'ng'iroq o'tkazib yuborildi.")
         return
@@ -116,10 +140,11 @@ def format_vacancy_card(item: Dict[str, Any]) -> str:
 
 async def notify_user_about_vacancies(matches: List[Dict[str, Any]]):
     """
-    Topilgan barcha mos vakansiyalar bo'yicha foydalanuvchini ogohlantirish:
-    1. Eng yaxshi (Top 1) vakansiyani o'zbekcha ovozli xabarga aylantirib jo'natadi.
-    2. CallMeBot orqali qo'ng'iroq chaqiradi.
-    3. Barcha qolgan vakansiyalarni Telegram chatga chiroyli matn shaklida yuboradi.
+    Topilgan mos vakansiyalar bo'yicha foydalanuvchini ogohlantirish:
+    1. Maksimal 10 ta eng yaxshi vakansiya tanlab olinadi.
+    2. Eng yuqori ball to'plagan 1 ta eng mos vakansiya ovozli xabarga aylantiriladi.
+    3. Agar vaqt 08:00 dan 20:00 oralig'ida bo'lsa, CallMeBot orqali qo'ng'iroq qilinadi.
+    4. Barcha 10 ta mos vakansiyalar Telegram chatga matn shaklida yuboriladi.
     """
     if not matches:
         return
@@ -127,20 +152,25 @@ async def notify_user_about_vacancies(matches: List[Dict[str, Any]]):
     # Ball bo'yicha saralash (eng yuqori ball birinchi)
     matches.sort(key=lambda x: x.get("analysis", {}).get("match_score", 0), reverse=True)
     
-    top_vacancy = matches[0]
+    # Maksimal 10 ta yangi vakansiya bilan cheklash
+    top_matches = matches[:MAX_MATCHES_PER_SCAN]
+    
+    # 1 TA ENG MOS VAKANSIYA
+    top_vacancy = top_matches[0]
     top_analysis = top_vacancy.get("analysis", {})
-    voice_text = top_analysis.get("voice_text") or f"Salom! Sizga yangi mos vakansiya topildi: {top_analysis.get('role_title', 'Python Dasturchi')}."
+    top_title = top_analysis.get('role_title', 'Python Dasturchi')
+    voice_text = top_analysis.get("voice_text") or f"Salom Behruz! Sizga yangi mos vakansiya topildi: {top_title}."
     
-    # 1. Qo'ng'iroq qilish (CallMeBot)
-    await send_callmebot_call(text="Sizga mos yangi vakansiya chiqdi! Alfred ovozli xabar qoldirdi.")
+    # 1. Qo'ng'iroq qilish (faqat 8:00 - 20:00 oralig'ida)
+    await send_callmebot_call(text=f"Sizga mos yangi {top_title} vakansiyasi chiqdi!")
     
-    # 2. Top-1 vakansiya uchun ovozli xabar yaratish va yuborish
+    # 2. Eng mos 1 ta vakansiya uchun o'zbekcha ovozli xabar
     voice_file = await generate_voice_message(voice_text)
     if voice_file:
-        caption = f"🎙 <b>Top-1 Vakansiya Ovozli Xulosasi:</b>\n<b>{top_analysis.get('role_title')}</b> ({top_analysis.get('match_score')}% moslik)"
+        caption = f"🎙 <b>Top-1 Eng Mos Vakansiya Ovozli Xabari:</b>\n<b>{top_title}</b> ({top_analysis.get('match_score')}% moslik)"
         await send_telegram_voice(voice_file, caption=caption)
         
-    # 3. Barcha mos vakansiyalarni matnli ko'rinishda yuborish
-    for vac in matches:
+    # 3. Barcha qolgan (10 tagacha) mos vakansiyalarni matnli ko'rinishda yuborish
+    for vac in top_matches:
         text_message = format_vacancy_card(vac)
         await send_telegram_message(text_message)

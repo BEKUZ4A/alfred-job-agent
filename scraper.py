@@ -2,8 +2,9 @@ import httpx
 import bs4
 import hashlib
 import logging
+from datetime import datetime, timezone
 from typing import List, Dict
-from config import TELEGRAM_CHANNELS
+from config import TELEGRAM_CHANNELS, TASHKENT_TZ
 
 logger = logging.getLogger("Alfred.Scraper")
 
@@ -22,6 +23,24 @@ def clean_text(raw_text: str) -> str:
 def make_hash_id(source: str, identifier: str) -> str:
     """Har bir vakansiyaga yagona ID generatsiya qilish"""
     return hashlib.md5(f"{source}:{identifier}".encode("utf-8")).hexdigest()
+
+def is_published_today(dt_str: str) -> bool:
+    """
+    Xabar bugungi sanada e'lon qilinganligini tekshirish (Toshkent vaqti UTC+5 bo'yicha).
+    Kecha yoki undan oldin chiqqan eski xabarlar qat'iy o'tkazib yuboriladi.
+    """
+    if not dt_str:
+        return False
+    try:
+        dt = datetime.fromisoformat(dt_str)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        post_date = dt.astimezone(TASHKENT_TZ).date()
+        today_date = datetime.now(TASHKENT_TZ).date()
+        return post_date >= today_date
+    except Exception as e:
+        logger.warning(f"Sana tekshirishda ogohlantirish ({dt_str}): {e}")
+        return False
 
 def is_potentially_relevant(text: str) -> bool:
     """Tezkor kalit so'zlar bo'yicha dastlabki filtr (Gemini API kvotasini tejash uchun)"""
@@ -42,7 +61,7 @@ def is_potentially_relevant(text: str) -> bool:
     return has_tech
 
 async def scrape_hh_uz() -> List[Dict]:
-    """HH.uz saytidan Python bo'yicha vakansiyalarni yig'ish"""
+    """HH.uz saytidan bugungi Python vakansiyalarini yig'ish"""
     vacancies = []
     
     # 1-usul: Rasmiy HH.ru API
@@ -53,6 +72,11 @@ async def scrape_hh_uz() -> List[Dict]:
             if resp.status_code == 200:
                 data = resp.json()
                 for item in data.get("items", []):
+                    # Faqat bugungi e'lonlarni tekshiramiz
+                    pub_at = item.get("published_at")
+                    if pub_at and not is_published_today(pub_at):
+                        continue
+                        
                     vac_id = make_hash_id("hh_uz", str(item.get("id")))
                     title = item.get("name", "Noma'lum")
                     company = item.get("employer", {}).get("name", "Noma'lum kompaniya")
@@ -124,7 +148,7 @@ async def scrape_hh_uz() -> List[Dict]:
     return vacancies
 
 async def scrape_telegram_channel(channel: str) -> List[Dict]:
-    """Ochiq Telegram kanalini t.me/s/{channel} orqali skanerlash"""
+    """Ochiq Telegram kanalini t.me/s/{channel} orqali faqat bugungi xabarlarini skanerlash"""
     vacancies = []
     url = f"https://t.me/s/{channel}"
     
@@ -138,8 +162,16 @@ async def scrape_telegram_channel(channel: str) -> List[Dict]:
             soup = bs4.BeautifulSoup(resp.text, "html.parser")
             messages = soup.find_all("div", class_="tgme_widget_message_wrap")
             
-            # Oxirgi 15 ta xabarni ko'rib chiqamiz
-            for msg in messages[-15:]:
+            # Oxirgi 25 ta xabarni tekshiramiz
+            for msg in messages[-25:]:
+                # 1. Faqat BUGUNGI kunda kelgan xabarlarni olamiz
+                time_elem = msg.find("time")
+                if time_elem and time_elem.get("datetime"):
+                    dt_str = time_elem.get("datetime")
+                    if not is_published_today(dt_str):
+                        # Bugungi kunga tegishli emas, o'tkazib yuboramiz
+                        continue
+                        
                 text_elem = msg.find("div", class_="tgme_widget_message_text")
                 if not text_elem:
                     continue
@@ -172,7 +204,7 @@ async def scrape_telegram_channel(channel: str) -> List[Dict]:
     return vacancies
 
 async def scrape_all_sources() -> List[Dict]:
-    """Barcha belgilangan manbalardan yangi vakansiyalarni to'plash"""
+    """Barcha belgilangan manbalardan faqat bugungi yangi vakansiyalarni to'plash"""
     all_vacancies = []
     
     # 1. HH.uz
@@ -184,5 +216,5 @@ async def scrape_all_sources() -> List[Dict]:
         ch_vacancies = await scrape_telegram_channel(ch)
         all_vacancies.extend(ch_vacancies)
         
-    logger.info(f"Jami {len(all_vacancies)} ta vakansiya topildi.")
+    logger.info(f"Bugungi sanaga oid jami {len(all_vacancies)} ta xom vakansiya topildi.")
     return all_vacancies

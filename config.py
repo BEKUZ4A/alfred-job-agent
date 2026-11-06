@@ -1,7 +1,18 @@
 import os
+from datetime import timezone, timedelta
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# Toshkent vaqt mintaqasi (UTC+5)
+TASHKENT_TZ = timezone(timedelta(hours=5))
+
+# Qo'ng'iroq qilish vaqti chegarasi (Ertalab 8:00 dan kechki 20:00 gacha)
+CALL_START_HOUR = int(os.getenv("CALL_START_HOUR", "8"))
+CALL_END_HOUR = int(os.getenv("CALL_END_HOUR", "20"))
+
+# Bitta qidiruvda jo'natiladigan maksimal yangi mos vakansiyalar soni
+MAX_MATCHES_PER_SCAN = int(os.getenv("MAX_MATCHES_PER_SCAN", "10"))
 
 # Telegram Bot sozlamalari
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
