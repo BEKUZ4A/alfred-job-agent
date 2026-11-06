@@ -59,15 +59,23 @@ def format_posted_at(dt_str: str) -> str:
         return "Noma'lum"
 
 def is_potentially_relevant(text: str) -> bool:
-    """Tezkor kalit so'zlar bo'yicha dastlabki filtr (Gemini API kvotasini tejash uchun)"""
+    """
+    Tezkor kalit so'zlar bo'yicha dastlabki filtr (Gemini API kvotasini tejash uchun).
+    Foydalanuvchi profili: Python, Django, FastAPI, Backend, AI, Junior, Intern, Dasturchi.
+    """
     t = text.lower()
     
     # Python yoki dasturlashga aloqador kalit so'zlar
-    python_keywords = ["python", "django", "fastapi", "flask", "backend", "bekend", "py", "ai", "llm", "dasturchi"]
+    python_keywords = [
+        "python", "django", "fastapi", "flask", 
+        "backend", "bekend", "py", "ai", "llm", 
+        "junior", "intern", "amaliyot", "stajyor", "stajirovka",
+        "dasturchi", "developer", "разработчик"
+    ]
     has_tech = any(k in t for k in python_keywords)
     
-    # Aniq Senior/Lead yoki mutlaqo boshqa sohalar
-    if "lead" in t and "junior" not in t:
+    # Aniq Senior/Lead yoki mutlaqo boshqa sohalar (agar junior/intern bo'lmasa)
+    if "lead" in t and "junior" not in t and "intern" not in t:
         return False
     if "senior" in t and "junior" not in t and "intern" not in t:
         return False

@@ -3,7 +3,7 @@ import asyncio
 import httpx
 from typing import Dict, Any, Optional
 from config import TELEGRAM_BOT_TOKEN
-from ai_analyzer import chat_with_alfred
+from ai_analyzer import chat_with_alfred, get_last_error
 from notifier import send_telegram_message
 from database import get_recent_vacancies
 
@@ -30,7 +30,7 @@ async def process_telegram_update(update: Dict[str, Any], trigger_scan_callback=
             "• Junior, Intern va Freelance o'rinlari\n\n"
             "<b>Mavjud buyruqlar:</b>\n"
             "🔍 /scan yoki 'tekshir' — Hoziroq yangi vakansiyalarni qidirish\n"
-            "📊 /status — Tizim holati va oxirgi topilgan ishlar\n"
+            "📊 /status — Tizim va AI holati, oxirgi xatolik va topilgan ishlar\n"
             "💬 Menga istalgan savolingizni yozishingiz mumkin (rezyume, intervyu, texnologiyalar haqida), men sizga o'zbek tilida yordam beraman!"
         )
         await send_telegram_message(welcome_text, chat_id=chat_id)
@@ -38,23 +38,32 @@ async def process_telegram_update(update: Dict[str, Any], trigger_scan_callback=
         
     # 2. /scan yoki 'tekshir' buyrug'i
     if text in ["/scan", "tekshir", "Tekshir", "qidir", "Qidir"]:
-        await send_telegram_message("🔎 <b>Qidiruv orqa fonda boshlandi...</b> Barcha Telegram kanallar va HH.uz tekshirilmoqda. Mos vakansiyalar topilsa darhol xabar va ovozli xabar beraman!", chat_id=chat_id)
+        await send_telegram_message(
+            "🔎 <b>Qidiruv orqa fonda tezkor boshlandi...</b>\n"
+            "Barcha Telegram kanallar va HH.uz tekshirilmoqda. Barcha yangi e'lonlar birgalikda (batch) sun'iy intellekt orqali tahlil qilinadi. Mos vakansiyalar topilsa darhol xabar va ovozli xabar beraman!",
+            chat_id=chat_id
+        )
         if trigger_scan_callback:
             # Orqa fonda skanerni ishga tushirish
             asyncio.create_task(trigger_scan_callback())
         return
         
-    # 3. /status buyrug'i
+    # 3. /status buyrug'i (Oxirgi xatolik va AI holatini ko'rsatish)
     if text == "/status":
         recent = get_recent_vacancies(limit=5)
-        status_text = f"🟢 <b>Alfred 24/7 Agent Holati: Faol</b>\n"
-        status_text += f"Bazada saqlangan oxirgi ishlar soni: {len(recent)}\n\n"
+        last_err = get_last_error()
+        status_text = (
+            "🟢 <b>Alfred 24/7 Agent Holati:</b> Faol\n\n"
+            f"🤖 <b>AI Tizimi (Gemini) holati:</b>\n<i>{last_err}</i>\n\n"
+            f"📊 <b>Bazada saqlangan ishlar soni:</b> {len(recent)}\n"
+        )
         if recent:
-            status_text += "<b>Oxirgi topilgan 5 ta vakansiya:</b>\n"
+            status_text += "\n<b>Oxirgi topilgan 5 ta vakansiya:</b>\n"
             for r in recent:
                 status_text += f"• {r.get('title')} ({r.get('match_score')}%) - <a href='{r.get('url')}'>Havola</a>\n"
         else:
-            status_text += "Hali birorta yangi vakansiya qayd etilmadi."
+            status_text += "\nHali birorta yangi vakansiya qayd etilmadi."
+            
         await send_telegram_message(status_text, chat_id=chat_id)
         return
         
