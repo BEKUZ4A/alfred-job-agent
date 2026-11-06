@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+*$py.class
+*.env
+.venv/
+venv/
+seen_vacancies.db
+*.mp3
+*.ogg
+.DS_Store
