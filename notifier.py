@@ -2,7 +2,7 @@ import httpx
 import urllib.parse
 import os
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Any, List
 from config import (
     TELEGRAM_BOT_TOKEN,
@@ -28,6 +28,25 @@ def is_call_allowed_now() -> bool:
     if not is_allowed:
         logger.info(f"Hozir soat {now.strftime('%H:%M')} (ruxsat etilgan vaqt: {CALL_START_HOUR}:00 - {CALL_END_HOUR}:00). Qo'ng'iroq bekor qilindi.")
     return is_allowed
+
+def format_posted_at(posted_at: str) -> str:
+    """
+    Vakansiya e'lon qilingan vaqtini o'qilishi oson ko'rinishda formatlash.
+    ISO format (UTC) → Toshkent vaqti (UTC+5): "06-11-2026 10:30"
+    HH.uz HTML scraping'dan kelgan oddiy matn bo'lsa, uni aynan qaytaradi.
+    """
+    if not posted_at:
+        return "Noma'lum"
+    try:
+        # ISO format bo'lsa, Toshkent vaqtiga o'giramiz
+        dt = datetime.fromisoformat(posted_at)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        dt_tash = dt.astimezone(TASHKENT_TZ)
+        return dt_tash.strftime("%d-%m-%Y %H:%M")
+    except (ValueError, TypeError):
+        # ISO format bo'lmasa (masalan, HH.uz HTML "1 soat oldin"), aynan qaytaramiz
+        return posted_at if posted_at else "Noma'lum"
 
 async def send_callmebot_call(text: str = "Sizga mos yangi vakansiya chiqdi"):
     """CallMeBot API orqali Telegramdan qo'ng'iroq qilish (faqat 8:00 dan 20:00 oralig'ida)"""
@@ -70,6 +89,8 @@ async def send_telegram_message(text: str, chat_id: str = "") -> bool:
     try:
         async with httpx.AsyncClient(timeout=15) as client:
             resp = await client.post(url, json=payload)
+            if resp.status_code != 200:
+                logger.warning(f"Telegram xabar yuborishda HTTP {resp.status_code}: {resp.text[:200]}")
             return resp.status_code == 200
     except Exception as e:
         logger.error(f"Telegram matn yuborishda xatolik: {e}")
@@ -110,8 +131,11 @@ async def send_telegram_voice(file_path: str, caption: str = "", chat_id: str = 
         except Exception:
             pass
 
-def format_vacancy_card(item: Dict[str, Any]) -> str:
-    """Vakansiya ma'lumotlarini chiroyli HTML formatga keltirish"""
+def format_vacancy_card(item: Dict[str, Any], rank: int = 0) -> str:
+    """
+    Vakansiya ma'lumotlarini chiroyli HTML formatga keltirish.
+    E'lon qilingan vaqt (posted_at) va tartib raqami (rank) ham ko'rsatiladi.
+    """
     analysis = item.get("analysis", {})
     score = analysis.get("match_score", 0)
     title = analysis.get("role_title") or item.get("title")
@@ -124,13 +148,27 @@ def format_vacancy_card(item: Dict[str, Any]) -> str:
     source = item.get("source", "Internet")
     tech_stack = ", ".join(analysis.get("tech_stack", [])) or "Python"
 
+    # ✅ E'lon qilingan vaqtni formatlash
+    posted_at_raw = item.get("posted_at", "")
+    posted_at_formatted = format_posted_at(posted_at_raw)
+
+    # Rank belgisi (1-chi eng mos)
+    rank_emoji = ""
+    if rank == 1:
+        rank_emoji = "🥇 "
+    elif rank == 2:
+        rank_emoji = "🥈 "
+    elif rank == 3:
+        rank_emoji = "🥉 "
+
     card = (
-        f"🎯 <b>Yangi mos vakansiya!</b> (Moslik: <b>{score}%</b>)\n\n"
+        f"{rank_emoji}🎯 <b>Yangi mos vakansiya!</b> (Moslik: <b>{score}%</b>)\n\n"
         f"📌 <b>Lavozim:</b> {title}\n"
         f"🏢 <b>Kompaniya:</b> {company}\n"
         f"📊 <b>Daraja:</b> {level}\n"
         f"💰 <b>Maosh:</b> {salary}\n"
         f"🛠 <b>Texnologiyalar:</b> {tech_stack}\n"
+        f"📅 <b>E'lon qilingan:</b> {posted_at_formatted}\n"  # ✅ Yangi qator
         f"🌐 <b>Manba:</b> {source}\n\n"
         f"💡 <b>Alfred tahlili:</b>\n<i>{summary}</i>\n\n"
         f"🔍 <b>Nega mos:</b> {reason}\n\n"
@@ -158,19 +196,33 @@ async def notify_user_about_vacancies(matches: List[Dict[str, Any]]):
     # 1 TA ENG MOS VAKANSIYA
     top_vacancy = top_matches[0]
     top_analysis = top_vacancy.get("analysis", {})
-    top_title = top_analysis.get('role_title', 'Python Dasturchi')
-    voice_text = top_analysis.get("voice_text") or f"Salom Behruz! Sizga yangi mos vakansiya topildi: {top_title}."
+    top_title = top_analysis.get("role_title", "Python Dasturchi")
+    top_score = top_analysis.get("match_score", 0)
+    top_company = top_analysis.get("company", top_vacancy.get("company", ""))
+
+    # ✅ E'lon qilingan vaqtni ovozli xabarga ham qo'shamiz
+    top_posted_at = format_posted_at(top_vacancy.get("posted_at", ""))
+
+    voice_text = top_analysis.get("voice_text") or (
+        f"Salom Behruz! Sizga yangi mos vakansiya topildi: {top_title}. "
+        f"Kompaniya: {top_company}. Moslik: {top_score} foiz. "
+        f"E'lon qilingan: {top_posted_at}. Batafsil Telegram chatda."
+    )
     
     # 1. Qo'ng'iroq qilish (faqat 8:00 - 20:00 oralig'ida)
-    await send_callmebot_call(text=f"Sizga mos yangi {top_title} vakansiyasi chiqdi!")
+    await send_callmebot_call(text=f"Sizga mos yangi {top_title} vakansiyasi chiqdi! Moslik: {top_score}%")
     
     # 2. Eng mos 1 ta vakansiya uchun o'zbekcha ovozli xabar
     voice_file = await generate_voice_message(voice_text)
     if voice_file:
-        caption = f"🎙 <b>Top-1 Eng Mos Vakansiya Ovozli Xabari:</b>\n<b>{top_title}</b> ({top_analysis.get('match_score')}% moslik)"
+        caption = (
+            f"🎙 <b>Top-1 Eng Mos Vakansiya Ovozli Xabari:</b>\n"
+            f"<b>{top_title}</b> ({top_score}% moslik)\n"
+            f"📅 E'lon qilingan: {top_posted_at}"
+        )
         await send_telegram_voice(voice_file, caption=caption)
         
     # 3. Barcha qolgan (10 tagacha) mos vakansiyalarni matnli ko'rinishda yuborish
-    for vac in top_matches:
-        text_message = format_vacancy_card(vac)
+    for i, vac in enumerate(top_matches, start=1):
+        text_message = format_vacancy_card(vac, rank=i)
         await send_telegram_message(text_message)

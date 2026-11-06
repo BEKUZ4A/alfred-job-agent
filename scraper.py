@@ -42,6 +42,22 @@ def is_published_today(dt_str: str) -> bool:
         logger.warning(f"Sana tekshirishda ogohlantirish ({dt_str}): {e}")
         return False
 
+def format_posted_at(dt_str: str) -> str:
+    """
+    UTC ISO vaqt satrini Toshkent vaqtiga (UTC+5) o'tkazib, o'qilishi oson formatda qaytarish.
+    Masalan: "06-11-2026 10:30 (Toshkent)"
+    """
+    if not dt_str:
+        return "Noma'lum"
+    try:
+        dt = datetime.fromisoformat(dt_str)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        dt_tash = dt.astimezone(TASHKENT_TZ)
+        return dt_tash.strftime("%d-%m-%Y %H:%M")
+    except Exception:
+        return "Noma'lum"
+
 def is_potentially_relevant(text: str) -> bool:
     """Tezkor kalit so'zlar bo'yicha dastlabki filtr (Gemini API kvotasini tejash uchun)"""
     t = text.lower()
@@ -73,7 +89,7 @@ async def scrape_hh_uz() -> List[Dict]:
                 data = resp.json()
                 for item in data.get("items", []):
                     # Faqat bugungi e'lonlarni tekshiramiz
-                    pub_at = item.get("published_at")
+                    pub_at = item.get("published_at", "")
                     if pub_at and not is_published_today(pub_at):
                         continue
                         
@@ -101,7 +117,8 @@ async def scrape_hh_uz() -> List[Dict]:
                         "company": company,
                         "url": url,
                         "text": clean_text(full_text),
-                        "source": "hh.uz"
+                        "source": "hh.uz",
+                        "posted_at": pub_at  # ✅ E'lon qilingan vaqt saqlandi
                     })
                 return vacancies
     except Exception as e:
@@ -132,6 +149,10 @@ async def scrape_hh_uz() -> List[Dict]:
                     
                     desc_elem = card.find("div", attrs={"data-qa": "vacancy-serp__vacancy_snippet_requirement"})
                     desc = desc_elem.get_text(strip=True) if desc_elem else ""
+
+                    # HH.uz HTML da sana tegi: <span data-qa="vacancy-serp__vacancy-date">
+                    date_elem = card.find("span", attrs={"data-qa": "vacancy-serp__vacancy-date"})
+                    posted_at_raw = date_elem.get_text(strip=True) if date_elem else ""
                     
                     vac_id = make_hash_id("hh_uz", url)
                     vacancies.append({
@@ -140,7 +161,8 @@ async def scrape_hh_uz() -> List[Dict]:
                         "company": company,
                         "url": url,
                         "text": clean_text(f"{title} | {company} | {desc}"),
-                        "source": "hh.uz"
+                        "source": "hh.uz",
+                        "posted_at": posted_at_raw  # ✅ HTML scraping dan ham vaqt olinadi
                     })
     except Exception as e:
         logger.error(f"HH HTML scraping xatoligi: {e}")
@@ -166,6 +188,7 @@ async def scrape_telegram_channel(channel: str) -> List[Dict]:
             for msg in messages[-25:]:
                 # 1. Faqat BUGUNGI kunda kelgan xabarlarni olamiz
                 time_elem = msg.find("time")
+                dt_str = ""
                 if time_elem and time_elem.get("datetime"):
                     dt_str = time_elem.get("datetime")
                     if not is_published_today(dt_str):
@@ -196,7 +219,8 @@ async def scrape_telegram_channel(channel: str) -> List[Dict]:
                     "company": f"Telegram @{channel}",
                     "url": post_url,
                     "text": raw_text,
-                    "source": f"@{channel}"
+                    "source": f"@{channel}",
+                    "posted_at": dt_str  # ✅ Telegram post vaqti (ISO format, UTC)
                 })
     except Exception as e:
         logger.error(f"Telegram {channel} kanalini o'qishda xatolik: {e}")

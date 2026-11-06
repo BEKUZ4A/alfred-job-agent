@@ -7,9 +7,9 @@ from config import GEMINI_API_KEY, CANDIDATE_PROFILE
 logger = logging.getLogger("Alfred.AIAnalyzer")
 
 AVAILABLE_MODELS = [
-    "gemini-3.8-flash",
-    "gemini-3.5-flash",
-    "gemini-3-flash-preview"
+    "gemini-2.0-flash",        # Eng tez va bepul model (asosiy)
+    "gemini-2.0-flash-lite",   # Yengil zaxira variant
+    "gemini-1.5-flash",        # Eski lekin ishonchli zaxira
 ]
 
 ANALYSIS_SYSTEM_INSTRUCTION = f"""
