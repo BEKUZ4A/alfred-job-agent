@@ -1,5 +1,8 @@
 import logging
-from typing import Dict, Any
+import asyncio
+import httpx
+from typing import Dict, Any, Optional
+from config import TELEGRAM_BOT_TOKEN
 from ai_analyzer import chat_with_alfred
 from notifier import send_telegram_message
 from database import get_recent_vacancies
@@ -26,20 +29,19 @@ async def process_telegram_update(update: Dict[str, Any], trigger_scan_callback=
             "• AI Agentlar va LLM integratsiyasi\n"
             "• Junior, Intern va Freelance o'rinlari\n\n"
             "<b>Mavjud buyruqlar:</b>\n"
-            "🔍 /scan — Hoziroq yangi vakansiyalarni qidirish\n"
+            "🔍 /scan yoki 'tekshir' — Hoziroq yangi vakansiyalarni qidirish\n"
             "📊 /status — Tizim holati va oxirgi topilgan ishlar\n"
             "💬 Menga istalgan savolingizni yozishingiz mumkin (rezyume, intervyu, texnologiyalar haqida), men sizga o'zbek tilida yordam beraman!"
         )
         await send_telegram_message(welcome_text, chat_id=chat_id)
         return
         
-    # 2. /scan buyrug'i
-    if text == "/scan":
-        await send_telegram_message("🔎 <b>Qidiruv boshlandi...</b> Barcha Telegram kanallar va HH.uz tekshirilmoqda. Yangilik bo'lsa darhol xabar beraman!", chat_id=chat_id)
+    # 2. /scan yoki 'tekshir' buyrug'i
+    if text in ["/scan", "tekshir", "Tekshir", "qidir", "Qidir"]:
+        await send_telegram_message("🔎 <b>Qidiruv orqa fonda boshlandi...</b> Barcha Telegram kanallar va HH.uz tekshirilmoqda. Mos vakansiyalar topilsa darhol xabar va ovozli xabar beraman!", chat_id=chat_id)
         if trigger_scan_callback:
-            count = await trigger_scan_callback()
-            if count == 0:
-                await send_telegram_message("ℹ️ Hozircha yangi mos vakansiyalar topilmadi. Qidiruvni davom ettiraman!", chat_id=chat_id)
+            # Orqa fonda skanerni ishga tushirish
+            asyncio.create_task(trigger_scan_callback())
         return
         
     # 3. /status buyrug'i
@@ -59,7 +61,7 @@ async def process_telegram_update(update: Dict[str, Any], trigger_scan_callback=
     # 4. Ovozli xabar kelsa
     if voice:
         await send_telegram_message(
-            "🎙 Ovozli xabaringizni qabul qildim! Men sizga doim yordamga tayyorman. Menga savollaringizni matn ko'rinishida yuborsangiz, darhol batafsil maslahat beraman.",
+            "🎙 Ovozli xabaringizni qabul qildim! Men sizga doim yordamga tayyorman. Menga savollaringizni matn ko'rinishida yozsangiz, darhol batafsil javob va maslahat beraman.",
             chat_id=chat_id
         )
         return
@@ -69,3 +71,58 @@ async def process_telegram_update(update: Dict[str, Any], trigger_scan_callback=
         logger.info(f"Foydalanuvchi xabari: {text}")
         ai_reply = await chat_with_alfred(text)
         await send_telegram_message(ai_reply, chat_id=chat_id)
+
+
+async def run_telegram_polling(trigger_scan_callback=None):
+    """
+    Telegram Bot API dan xabarlarni getUpdates (long polling) orqali fonda uzluksiz o'qib borish.
+    Bu FastAPI serveri bilan parallel fonda (asyncio task) 24/7 ishlaydi.
+    """
+    if not TELEGRAM_BOT_TOKEN:
+        logger.warning("TELEGRAM_BOT_TOKEN topilmadi, polling ishga tushmadi.")
+        return
+
+    # Avval webhook faol bo'lsa uni o'chiramiz (Conflict xatoligi bo'lmasligi uchun)
+    delete_wh_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/deleteWebhook?drop_pending_updates=false"
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            await client.get(delete_wh_url)
+            logger.info("Eski Telegram webhook tozalandi, Polling rejimiga o'tildi.")
+    except Exception as e:
+        logger.warning(f"deleteWebhook bajarishda ogohlantirish: {e}")
+
+    offset: Optional[int] = None
+    poll_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getUpdates"
+    
+    logger.info("🟢 Telegram Bot Polling (uzluksiz qabul qilish) fonda ishga tushdi!")
+
+    async with httpx.AsyncClient(timeout=35) as client:
+        while True:
+            try:
+                params = {"timeout": 25}
+                if offset is not None:
+                    params["offset"] = offset
+
+                resp = await client.get(poll_url, params=params)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if data.get("ok"):
+                        updates = data.get("result", [])
+                        for update in updates:
+                            offset = update["update_id"] + 1
+                            # Har bir xabarni async task sifatida parallel qayta ishlash
+                            asyncio.create_task(
+                                process_telegram_update(update, trigger_scan_callback=trigger_scan_callback)
+                            )
+                elif resp.status_code == 409:
+                    logger.warning("Telegram 409 Conflict: boshqa instansiya faol, 5 soniya kutamiz...")
+                    await asyncio.sleep(5)
+                else:
+                    logger.warning(f"getUpdates status {resp.status_code}: {resp.text[:100]}")
+                    await asyncio.sleep(3)
+            except asyncio.CancelledError:
+                logger.info("Telegram Polling to'xtatildi.")
+                break
+            except Exception as e:
+                logger.error(f"Telegram polling loop xatoligi: {e}")
+                await asyncio.sleep(3)

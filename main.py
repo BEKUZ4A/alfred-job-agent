@@ -11,7 +11,7 @@ from database import init_db, is_vacancy_seen, mark_vacancy_seen
 from scraper import scrape_all_sources
 from ai_analyzer import analyze_vacancy
 from notifier import notify_user_about_vacancies
-from bot_handler import process_telegram_update
+from bot_handler import process_telegram_update, run_telegram_polling
 
 # Log sozlamalari
 logging.basicConfig(
@@ -24,7 +24,7 @@ logger = logging.getLogger("Alfred.Main")
 is_scanning = False
 
 async def run_vacancy_scan() -> int:
-    """Yangi vakansiyalarni qidirish, tahlil qilish va moslarini yuborish asosiy funksiyasi"""
+    """Yangi vakansiyalarni qidirish, tahlil qilish va moslarini yuborish asosiy funksiyasi (Orqa fonda ishlaydi)"""
     global is_scanning
     if is_scanning:
         logger.info("Qidiruv jarayoni allaqachon bajarilmoqda...")
@@ -107,19 +107,23 @@ async def lifespan(app: FastAPI):
     init_db()
     logger.info("Alfred AI Agent ishga tushdi!")
     
-    # Orqa fonda avtomatik qidiruv taymerini yoqish
+    # 1. Orqa fonda Telegram Bot Pollingni ishga tushirish (xabarlarni zudlik bilan o'qish)
+    bot_task = asyncio.create_task(run_telegram_polling(trigger_scan_callback=run_vacancy_scan))
+    
+    # 2. Orqa fonda avtomatik qidiruv taymerini yoqish
     timer_task = asyncio.create_task(background_scheduler())
     
     yield
     
-    # Dastur to'xtaganda
+    # Dastur to'xtaganda vazifalarni to'xtatish
+    bot_task.cancel()
     timer_task.cancel()
     logger.info("Alfred AI Agent to'xtatildi.")
 
 app = FastAPI(
     title="Alfred - 24/7 AI IT Recruiter",
     description="Python/Django/FastAPI/AI bo'yicha vakansiyalarni 24/7 qidiruvchi shaxsiy agent",
-    version="1.0.0",
+    version="1.1.0",
     lifespan=lifespan
 )
 
@@ -128,17 +132,17 @@ async def root():
     return {
         "status": "online",
         "agent": "Alfred 24/7 AI IT Recruiter",
-        "author": "Behruz",
+        "bot_listener": "active (Telegram Polling)",
         "endpoints": {
-            "/health": "Server sog'lig'i tekshiruvi (cron-job.org uchun)",
-            "/scan": "Yangi vakansiyalarni darhol qidirish",
-            "/telegram-webhook": "Telegram Bot webhook manzili"
+            "/health": "Server sog'lig'i tekshiruvi",
+            "/scan": "Yangi vakansiyalarni darhol (orqa fonda) qidirish",
+            "/telegram-webhook": "Telegram Bot webhook manzili (ixtiyoriy)"
         }
     }
 
 @app.get("/health")
 async def health_check():
-    """cron-job.org orqali serverni 24/7 uyg'oq tutish uchun endpoint"""
+    """cron-job.org yoki Render health tekshiruvi uchun endpoint"""
     return {
         "status": "healthy",
         "agent": "Alfred",
@@ -147,19 +151,32 @@ async def health_check():
 
 @app.get("/scan")
 async def trigger_scan(background_tasks: BackgroundTasks):
-    """Vakansiya qidirishni ishga tushiruvchi endpoint"""
+    """
+    Vakansiya qidirishni ishga tushiruvchi endpoint.
+    cron-job.org vaqt limiti (30 soniya) tufayli timeout bo'lmasligi uchun,
+    og'ir skanerlash ishi FastAPI BackgroundTasks ga beriladi va 1 soniyada javob qaytariladi.
+    """
     background_tasks.add_task(run_vacancy_scan)
     return {
-        "message": "Qidiruv orqa fonda ishga tushirildi!",
-        "status": "processing"
+        "status": "scan started",
+        "message": "Vakansiyalarni qidirish orqa fonda tezkor boshlandi!"
+    }
+
+@app.post("/scan")
+async def trigger_scan_post(background_tasks: BackgroundTasks):
+    """POST so'rovlar uchun ham /scan"""
+    background_tasks.add_task(run_vacancy_scan)
+    return {
+        "status": "scan started",
+        "message": "Vakansiyalarni qidirish orqa fonda tezkor boshlandi!"
     }
 
 @app.post("/telegram-webhook")
 async def telegram_webhook(request: Request):
-    """Telegram Botdan kelgan xabarlarni qabul qilish"""
+    """Telegram Webhook kelganda ham qayta ishlash imkoniyati"""
     try:
         update_data = await request.json()
-        await process_telegram_update(update_data, trigger_scan_callback=run_vacancy_scan)
+        asyncio.create_task(process_telegram_update(update_data, trigger_scan_callback=run_vacancy_scan))
         return JSONResponse(content={"ok": True})
     except Exception as e:
         logger.error(f"Webhook xatosi: {e}")
