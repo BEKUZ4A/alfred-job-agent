@@ -352,3 +352,60 @@ async def prepare_conversational_voice_text(raw_or_summary: str) -> str:
         "Barcha batafsil ma'lumotlarni Telegram chatimizda qoldirdim, bemalol ko'rib chiqishingiz mumkin."
     )
 
+async def generate_tailored_resume_and_pitch(post_text: str, user_instruction: str = "") -> str:
+    """
+    Aniq bitta vakansiya/e'lon matni asosida Behruzbek Bohodirovning
+    haqiqiy ma'lumotlari bo'yicha maxsus moslashtirilgan Rezyume,
+    Telegram Cover Letter va HR kontaktini tayyorlab berish.
+    """
+    prompt = f"""
+    Sen "Alfred" - yuqori darajadagi IT karyera maslahatchisi va shaxsiy AI assistentsan.
+    Foydalanuvchi Behruzbek Bohodirov quyidagi ANIQ ISH E'LONI bo'yicha murojaat qilmoqchi:
+
+    ISH E'LONI TO'LIQ MATNI:
+    {post_text}
+
+    QO'SHIMCHA KO'RSATMA: {user_instruction}
+
+    NOMZODNING HAQIQIY MA'LUMOTLARI:
+    - Ism-familiya: Behruzbek Bohodirov
+    - GitHub profil: https://github.com/BEKUZ4A
+    - Asosiy texnologiyalar (Stek): Python, Django, DRF (Django REST Framework), FastAPI, PostgreSQL, Docker, Redis, Celery, AI Agents (Gemini API, Claude, Cursor), Frontend asoslari (HTML, CSS, JavaScript, React.js)
+    - Asosiy Loyihalar:
+      1. Risk Radar: AI biznes-analitika platformasi (DRF, Docker, AWS, PostgreSQL, ma'lumotlar tahlili).
+      2. Uzum AI Shop: Gemini API bilan integratsiyalashgan aqlli e-commerce platformasi.
+      3. Alfred AI Agent: 24/7 ishlaydigan aqlli karyera va vakansiyalar monitoring agenti (Python, FastAPI, Gemini API, ElevenLabs TTS).
+    - Sertifikat va Yutuqlar:
+      * Codify Tech Backend Certificate (CID-2026-000026)
+      * Turon University AI Engineering Hackathon finalchisi
+
+    VAZIFA:
+    Ushbu e'londagi har bir talabni chuqur tahlil qil va Behruzbekning tajribasi asosida quyidagi 3 qismdan iborat tayyor to'plamni tuzib ber:
+
+    1. 👤 HR / ISH BERUVCHI KONTAKTI VA MASLAHAT:
+       - E'londan aniqlangan kontaktlar (Telegram username, telefon, mas'ul shaxs).
+       - Qachon va qanday murojaat qilish bo'yicha qisqa amaliy tavsiya.
+
+    2. 📨 TELEGRAM COVER LETTER (HR ga yuborish uchun tayyor murojaat xati):
+       - To'g'ridan-to'g'ri nusxalab Telegramdan yuborishga qulay, samimiy va professional.
+       - Aynan e'londa so'ralgan texnologiyalar va vazifalarga (masalan backend dasturlash, mentorlik yoki botlar) urg'u berilgan.
+       - GitHub havolasi (https://github.com/BEKUZ4A) kiritilgan.
+
+    3. 📄 VAKANSIYAGA MOSLASHTIRILGAN REZYUME (CV):
+       - Vakansiya talablariga mos unvon va qisqa xulosa.
+       - Texnologik stek (e'longa moslari oldinda).
+       - Tegishli loyihalar va ularning amaliy natijalari.
+       - Sertifikat va yutuqlar (Codify Tech Backend Certificate CID-2026-000026, Turon Hackathon).
+       - Aloqa va GitHub.
+
+    Telegramda qulay o'qilishi uchun chiroyli sarlavhalar va formatlashdan foydalan.
+    """
+    res = await call_gemini_api(prompt)
+    if res:
+        return res.strip()
+    return (
+        "❌ <i>Kechirasiz, sun'iy intellekt orqali rezyume va murojaat xatini shakllantirishda xatolik yuz berdi. "
+        "Iltimos, qayta urinib ko'ring yoki /status buyrug'ini tekshiring.</i>"
+    )
+
+

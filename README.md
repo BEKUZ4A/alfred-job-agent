@@ -25,6 +25,9 @@ Assalomu alaykum! Ushbu loyiha siz uchun **kompyuteringiz o'chiq turganda ham** 
    - 🎙 **Ovozli xabarni eshitish:** Botga ovozli xabar yuborsangiz, Gemini AI orqali uni eshitib tushunadi va buyruqni bajaradi.
    - 🏢 **Guruh nomi bo'yicha qidiruv:** Istalgan guruh nomini @ siz aytsangiz ham qidiradi (*"JobLink"*, *"Ustoz Shogird"*, *"Freelance"*).
    - 📨 **"Rezyume / Taklif yuborish" tugmasi:** Frilans buyurtma kelganda, shu tugmani bosish bilan Gemini mijozga yuborish uchun professional tijoriy taklif (Pitch/Cover Letter + GitHub: BEKUZ4A) yozib beradi!
+5. **Aniq Telegram Post Ssilkasi orqali Maxsus Rezyume va Cover Letter:**
+   - Botga aniq post ssilkasi (masalan: `https://t.me/UstozShogird/45810`) yuborilganda, butun kanalni skaner qilmasdan, to'g'ridan-to'g'ri o'sha post matnini yuklab oladi.
+   - Nomzodning haqiqiy profili (Behruzbek Bohodirov, Python/Django/FastAPI/AI, Risk Radar, Uzum AI Shop, Alfred loyihalari, sertifikatlar) asosida ushbu ishga moslashtirilgan tayyor **Rezyume (CV)**, Telegram **Cover Letter** va e'londagi **HR kontaktini** chiqarib beradi!
 
 ---
 

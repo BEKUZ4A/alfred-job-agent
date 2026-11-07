@@ -120,31 +120,56 @@ async def make_call(text: str = "Sizga mos yangi vakansiya chiqdi", force: bool 
 send_callmebot_call = make_call
 
 async def send_telegram_message(text: str, chat_id: str = "", reply_markup: Optional[Dict[str, Any]] = None) -> bool:
-    """Telegram bot orqali matnli xabar va ixtiyoriy inline tugmalar (reply_markup) yuborish"""
+    """Telegram bot orqali matnli xabar va ixtiyoriy inline tugmalar (reply_markup) yuborish. Uzun xabarlarni bo'laklab xatosiz yuboradi."""
     target_chat_id = chat_id or TELEGRAM_CHAT_ID
     if not TELEGRAM_BOT_TOKEN or not target_chat_id:
         logger.warning("Telegram Bot Token yoki Chat ID sozlanmagan!")
         return False
         
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": target_chat_id,
-        "text": text,
-        "parse_mode": "HTML",
-        "disable_web_page_preview": False
-    }
-    if reply_markup:
-        payload["reply_markup"] = reply_markup
-    
-    try:
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.post(url, json=payload)
-            if resp.status_code != 200:
-                logger.warning(f"Telegram xabar yuborishda HTTP {resp.status_code}: {resp.text[:200]}")
-            return resp.status_code == 200
-    except Exception as e:
-        logger.error(f"Telegram matn yuborishda xatolik: {e}")
-        return False
+
+    # Telegram 4096 belgi chegarasi: uzun xabarlarni bo'laklab yuborish
+    chunks = []
+    if len(text) > 3900:
+        current_chunk = ""
+        for line in text.split("\n"):
+            if len(current_chunk) + len(line) + 1 > 3800:
+                chunks.append(current_chunk)
+                current_chunk = line + "\n"
+            else:
+                current_chunk += line + "\n"
+        if current_chunk:
+            chunks.append(current_chunk)
+    else:
+        chunks = [text]
+
+    success = True
+    async with httpx.AsyncClient(timeout=20) as client:
+        for i, chunk in enumerate(chunks):
+            chunk_markup = reply_markup if i == len(chunks) - 1 else None
+            payload = {
+                "chat_id": target_chat_id,
+                "text": chunk,
+                "parse_mode": "HTML",
+                "disable_web_page_preview": False
+            }
+            if chunk_markup:
+                payload["reply_markup"] = chunk_markup
+
+            try:
+                resp = await client.post(url, json=payload)
+                if resp.status_code != 200:
+                    # Agar HTML teglarida xatolik bo'lsa, parse_mode siz oddiy matn qilib qayta urinish
+                    payload.pop("parse_mode", None)
+                    resp_retry = await client.post(url, json=payload)
+                    if resp_retry.status_code != 200:
+                        logger.warning(f"Telegram xabar yuborishda HTTP {resp_retry.status_code}: {resp_retry.text[:200]}")
+                        success = False
+            except Exception as e:
+                logger.error(f"Telegram chunk xabar yuborishda xato: {e}")
+                success = False
+
+    return success
 
 async def send_telegram_voice(file_path: str, caption: str = "", chat_id: str = "") -> bool:
     """Telegram bot orqali ovozli xabar (voice/audio) yuborish"""

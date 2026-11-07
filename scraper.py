@@ -6,7 +6,7 @@ import asyncio
 import re
 import urllib.parse
 from datetime import datetime, timezone, timedelta
-from typing import List, Dict
+from typing import List, Dict, Optional
 from curl_cffi import requests as cffi_requests
 from config import TELEGRAM_CHANNELS, TASHKENT_TZ
 
@@ -404,3 +404,63 @@ async def scrape_all_sources() -> List[Dict]:
             
     logger.info(f"Oxirgi 24 soatga oid jami {len(all_vacancies)} ta noyob vakansiya va frilans buyurtma yig'ildi.")
     return all_vacancies
+
+async def scrape_telegram_single_post(channel: str, post_id: str) -> Optional[str]:
+    """
+    Aniq bitta Telegram postining to'liq matnini t.me/<channel>/<post_id>?embed=1
+    yoki t.me/s/<channel>/<post_id> orqali yuklab oladi.
+    Filtrlar (60% ball, 24 soat va b.) qo'llanmaydi, post matni to'g'riligicha olinadi.
+    """
+    clean_channel = channel.strip().lstrip("@").replace("https://t.me/s/", "").replace("https://t.me/", "").replace("t.me/s/", "").replace("t.me/", "").strip("/")
+    clean_post_id = str(post_id).strip()
+    
+    urls = [
+        f"https://t.me/{clean_channel}/{clean_post_id}?embed=1",
+        f"https://t.me/s/{clean_channel}/{clean_post_id}",
+        f"https://t.me/{clean_channel}/{clean_post_id}"
+    ]
+    
+    # 1. httpx orqali sinab ko'rish
+    try:
+        async with httpx.AsyncClient(timeout=15, headers=HEADERS, follow_redirects=True) as client:
+            for url in urls:
+                try:
+                    resp = await client.get(url)
+                    if resp.status_code == 200:
+                        soup = bs4.BeautifulSoup(resp.text, "html.parser")
+                        text_el = soup.find(class_="tgme_widget_message_text") or soup.find(class_="js-message_text")
+                        if text_el:
+                            full_text = text_el.get_text("\n", strip=True)
+                            if full_text:
+                                logger.info(f"Telegram post (@{clean_channel}/{clean_post_id}) matni olindi ({len(full_text)} belgi)")
+                                return full_text
+                except Exception as req_err:
+                    logger.debug(f"httpx bilan {url} yuklashda xato: {req_err}")
+    except Exception as e:
+        logger.warning(f"httpx orqali post yuklashda umumiy xato: {e}")
+
+    # 2. Zaxira: curl_cffi orqali brauzer barmoq izi bilan urinish
+    try:
+        def _fetch_cffi():
+            for url in urls:
+                try:
+                    resp = cffi_requests.get(url, headers=HEADERS, impersonate="chrome", timeout=15)
+                    if resp.status_code == 200:
+                        soup = bs4.BeautifulSoup(resp.text, "html.parser")
+                        text_el = soup.find(class_="tgme_widget_message_text") or soup.find(class_="js-message_text")
+                        if text_el:
+                            full_text = text_el.get_text("\n", strip=True)
+                            if full_text:
+                                return full_text
+                except Exception:
+                    pass
+            return None
+
+        cffi_result = await asyncio.to_thread(_fetch_cffi)
+        if cffi_result:
+            return cffi_result
+    except Exception as cffi_err:
+        logger.warning(f"curl_cffi bilan post yuklashda xato: {cffi_err}")
+
+    return None
+

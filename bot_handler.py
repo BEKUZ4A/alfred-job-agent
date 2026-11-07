@@ -4,9 +4,16 @@ import httpx
 import re
 from typing import Dict, Any, Optional, List
 from config import TELEGRAM_BOT_TOKEN, MIN_MATCH_SCORE
-from ai_analyzer import chat_with_alfred, get_last_error, batch_analyze_vacancies, transcribe_voice_with_gemini, generate_freelance_pitch
+from ai_analyzer import (
+    chat_with_alfred, 
+    get_last_error, 
+    batch_analyze_vacancies, 
+    transcribe_voice_with_gemini, 
+    generate_freelance_pitch,
+    generate_tailored_resume_and_pitch
+)
 from notifier import send_telegram_message, send_telegram_voice, format_vacancy_card, make_call
-from scraper import scrape_telegram_channel, scrape_hh_uz
+from scraper import scrape_telegram_channel, scrape_hh_uz, scrape_telegram_single_post
 from database import get_recent_vacancies, mark_vacancy_seen, get_vacancy_by_id, get_top_vacancies
 from voice import generate_voice_message
 
@@ -62,6 +69,10 @@ def resolve_channel_query(user_text: str) -> Optional[tuple[str, str]]:
     Natija: (channel_username, display_name) yoki None.
     """
     raw = user_text.strip().lower()
+
+    # Aniq bitta post ssilkasi bo'lsa (masalan: t.me/UstozShogird/45810), kanal skaneri sifatida qabul qilmaslik kerak!
+    if re.search(r"t\.me/(?:s/)?[a-zA-Z0-9_]{3,32}/\d+", raw, re.IGNORECASE):
+        return None
     
     # 1. Buyruq prefikslari: /kanal <nomi>, /channel <nomi>, /search <nomi>
     for prefix in ["/kanal", "/channel", "/search", "kanal:", "guruh:"]:
@@ -420,6 +431,42 @@ async def process_telegram_update(update: Dict[str, Any], trigger_scan_callback=
             chat_id=chat_id
         )
         text = transcribed.strip()
+
+    # 4.5. ANIQ TELEGRAM POST SSILKASI KELGANDA (Single Post Parser + Maxsus Rezyume / Cover Letter)
+    # Masalan: https://t.me/UstozShogird/45810 shu vakansiyaga rezyume qilibber
+    if text:
+        post_match = re.search(r"(?:https?://)?t\.me/(?:s/)?([a-zA-Z0-9_]{3,32})/(\d+)", text, re.IGNORECASE)
+        if post_match:
+            target_channel = post_match.group(1)
+            target_post_id = post_match.group(2)
+            logger.info(f"Aniq Telegram post ssilkasi aniqlandi: @{target_channel}/{target_post_id}")
+
+            await send_telegram_message(
+                f"🔎 <b>Aniq e'lon posti aniqlandi:</b> <code>@{target_channel}/{target_post_id}</code>\n"
+                f"⏳ E'lon matni to'g'ridan-to'g'ri yuklab olinmoqda va tahlil qilinmoqda...",
+                chat_id=chat_id
+            )
+
+            post_text = await scrape_telegram_single_post(target_channel, target_post_id)
+            if not post_text:
+                await send_telegram_message(
+                    f"❌ <b>Post matnini yuklab bo'lmadi!</b>\n"
+                    f"Post manzili: <code>t.me/{target_channel}/{target_post_id}</code>\n"
+                    f"<i>(Kanal yopiq bo'lishi yoki post o'chirilgan bo'lishi mumkin)</i>",
+                    chat_id=chat_id
+                )
+                return
+
+            await send_telegram_message(
+                f"✅ <b>Post matni muvaffaqiyatli olindi!</b>\n"
+                f"🤖 <i>Behruzbek Bohodirovning tajribasi va loyihalari asosida ushbu vakansiya talablariga 100% moslashtirilgan Rezyume, Cover Letter va HR kontakti tayyorlanmoqda...</i>",
+                chat_id=chat_id
+            )
+
+            # Gemini orqali maxsus Rezyume, Cover Letter va HR kontaktini tayyorlash
+            docs = await generate_tailored_resume_and_pitch(post_text, user_instruction=text)
+            await send_telegram_message(docs, chat_id=chat_id)
+            return
 
     # 5. Aniq bir kanal/guruh bo'yicha qidiruv so'ralganmi? (@ bilan yoki oddiy nomi bilan)
     if text:
