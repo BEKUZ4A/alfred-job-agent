@@ -177,16 +177,17 @@ async def scrape_hh_uz() -> List[Dict]:
         
     return vacancies
 
-async def scrape_telegram_channel(channel: str) -> List[Dict]:
-    """Ochiq Telegram kanalini t.me/s/{channel} orqali faqat bugungi xabarlarini skanerlash"""
+async def scrape_telegram_channel(channel: str, today_only: bool = True) -> List[Dict]:
+    """Ochiq Telegram kanalini t.me/s/{channel} orqali skanerlash. today_only=False bo'lsa oxirgi e'lonlarni ham oladi"""
     vacancies = []
-    url = f"https://t.me/s/{channel}"
+    clean_channel = channel.strip().lstrip("@").replace("https://t.me/s/", "").replace("https://t.me/", "").replace("t.me/s/", "").replace("t.me/", "").strip("/")
+    url = f"https://t.me/s/{clean_channel}"
     
     try:
         async with httpx.AsyncClient(timeout=12, headers=HEADERS, follow_redirects=True) as client:
             resp = await client.get(url)
             if resp.status_code != 200:
-                logger.warning(f"Kanalni yuklab bo'lmadi: {channel} (Status: {resp.status_code})")
+                logger.warning(f"Kanalni yuklab bo'lmadi: {clean_channel} (Status: {resp.status_code})")
                 return []
                 
             soup = bs4.BeautifulSoup(resp.text, "html.parser")
@@ -194,12 +195,12 @@ async def scrape_telegram_channel(channel: str) -> List[Dict]:
             
             # Oxirgi 25 ta xabarni tekshiramiz
             for msg in messages[-25:]:
-                # 1. Faqat BUGUNGI kunda kelgan xabarlarni olamiz
+                # 1. Sana tekshiruvi (agar today_only yoqilgan bo'lsa)
                 time_elem = msg.find("time")
                 dt_str = ""
                 if time_elem and time_elem.get("datetime"):
                     dt_str = time_elem.get("datetime")
-                    if not is_published_today(dt_str):
+                    if today_only and not is_published_today(dt_str):
                         # Bugungi kunga tegishli emas, o'tkazib yuboramiz
                         continue
                         
@@ -213,25 +214,25 @@ async def scrape_telegram_channel(channel: str) -> List[Dict]:
                     
                 # Post havolasi va ID sini aniqlash
                 date_elem = msg.find("a", class_="tgme_widget_message_date")
-                post_url = date_elem.get("href") if date_elem else f"https://t.me/{channel}"
+                post_url = date_elem.get("href") if date_elem else f"https://t.me/{clean_channel}"
                 
                 # Sarlavhani birinchi qatordan olish
                 lines = [line.strip() for line in raw_text.split("\n") if line.strip()]
                 title = lines[0][:80] if lines else "Telegram vakansiya"
                 
-                vac_id = make_hash_id(channel, post_url)
+                vac_id = make_hash_id(clean_channel, post_url)
                 
                 vacancies.append({
                     "id": vac_id,
                     "title": title,
-                    "company": f"Telegram @{channel}",
+                    "company": f"Telegram @{clean_channel}",
                     "url": post_url,
                     "text": raw_text,
-                    "source": f"@{channel}",
+                    "source": f"@{clean_channel}",
                     "posted_at": dt_str  # ✅ Telegram post vaqti (ISO format, UTC)
                 })
     except Exception as e:
-        logger.error(f"Telegram {channel} kanalini o'qishda xatolik: {e}")
+        logger.error(f"Telegram {clean_channel} kanalini o'qishda xatolik: {e}")
         
     return vacancies
 

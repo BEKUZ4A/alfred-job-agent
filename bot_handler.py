@@ -1,55 +1,238 @@
 import logging
 import asyncio
 import httpx
-from typing import Dict, Any, Optional
-from config import TELEGRAM_BOT_TOKEN
-from ai_analyzer import chat_with_alfred, get_last_error
-from notifier import send_telegram_message, make_call
-from database import get_recent_vacancies
+import re
+from typing import Dict, Any, Optional, List
+from config import TELEGRAM_BOT_TOKEN, MIN_MATCH_SCORE
+from ai_analyzer import chat_with_alfred, get_last_error, batch_analyze_vacancies, transcribe_voice_with_gemini
+from notifier import send_telegram_message, send_telegram_voice, format_vacancy_card, make_call
+from scraper import scrape_telegram_channel
+from database import get_recent_vacancies, mark_vacancy_seen
+from voice import generate_voice_message
 
 logger = logging.getLogger("Alfred.BotHandler")
 
+# O'zbekistondagi ommabop IT Telegram kanallari va ularning oddiy xalq tilidagi nomlari (aliaslar)
+CHANNEL_ALIASES = {
+    "joblinkuz": [
+        "joblink", "joblinkuz", "job link", "joblink.uz", "joblink uz", "job_link"
+    ],
+    "rizqimuz": [
+        "rizqim", "rizqimuz", "rizqim uz", "rizq", "rizqim.uz"
+    ],
+    "ish_kerak_toshkent_bormi_ishlar": [
+        "ish kerak toshkent", "ish kerak", "ishkerak", "toshkent ishlar", "ish_kerak", "bormi ishlar"
+    ],
+    "jobforjunior": [
+        "jobforjunior", "job for junior", "junior jobs", "job for juniors", "junior job", "jobjunior", "junior"
+    ],
+    "freelance_uzb": [
+        "freelance", "freelance uzb", "freelance_uzb", "frilans", "frilans uzb", "freelancer", "freelans"
+    ],
+    "young_june": [
+        "young june", "young_june", "young júnior", "young junior", "yang jyun"
+    ],
+    "young_intern": [
+        "young intern", "young_intern", "youngintern", "intern", "stajyor", "amaliyot"
+    ]
+}
+
+CHANNEL_DISPLAY_NAMES = {
+    "joblinkuz": "JobLink (@joblinkuz)",
+    "rizqimuz": "Rizqim (@rizqimuz)",
+    "ish_kerak_toshkent_bormi_ishlar": "Ish kerak Toshkent (@ish_kerak_toshkent_bormi_ishlar)",
+    "jobforjunior": "Job for Junior (@jobforjunior)",
+    "freelance_uzb": "Freelance Uzbekistan (@freelance_uzb)",
+    "young_june": "Young June (@young_june)",
+    "young_intern": "Young Intern (@young_intern)"
+}
+
+def resolve_channel_query(user_text: str) -> Optional[tuple[str, str]]:
+    """
+    Foydalanuvchi aytgan matn yoki ovozdan Telegram guruh/kanal nomini aniqlash.
+    @ belgisi bilan aytilmasa ham (masalan, 'Joblink', 'Rizqim', 'Freelance') aniqlaydi.
+    Natija: (channel_username, display_name) yoki None.
+    """
+    raw = user_text.strip().lower()
+    
+    # 1. Buyruq prefikslari: /kanal <nomi>, /channel <nomi>, /search <nomi>
+    for prefix in ["/kanal", "/channel", "/search", "kanal:", "guruh:"]:
+        if raw.startswith(prefix):
+            target = raw[len(prefix):].strip().lstrip("@")
+            if target:
+                raw = target
+                break
+                
+    # 2. Ma'lum kanallar ro'yxatidan qidirish (uzunroq iboralar birinchi)
+    sorted_channels = []
+    for ch, aliases in CHANNEL_ALIASES.items():
+        for alias in aliases:
+            sorted_channels.append((alias, ch))
+    sorted_channels.sort(key=lambda x: len(x[0]), reverse=True)
+    
+    for alias, ch in sorted_channels:
+        if alias in raw:
+            disp = CHANNEL_DISPLAY_NAMES.get(ch, f"@{ch}")
+            return ch, disp
+            
+    # 3. Aniq @ bilan kiritilgan bo'lsa (masalan: @python_jobs_uz)
+    at_match = re.search(r"@([a-zA-Z0-9_]{4,32})", raw)
+    if at_match:
+        ch = at_match.group(1)
+        return ch, f"@{ch}"
+        
+    # 4. t.me/ havolasi bilan kiritilgan bo'lsa (masalan: t.me/dev_uz)
+    tme_match = re.search(r"t\.me/(?:s/)?([a-zA-Z0-9_]{4,32})", raw)
+    if tme_match:
+        ch = tme_match.group(1)
+        return ch, f"@{ch}"
+        
+    # 5. "<nomi> kanalidan" yoki "<nomi> guruhidan" shaklida aytilgan bo'lsa
+    group_match = re.search(r"([a-zA-Z0-9_]{4,32})\s+(?:kanalidan|guruhidan|kanalini|guruhini|dan|guruhi|kanali)", raw)
+    if group_match:
+        candidate = group_match.group(1)
+        stop_words = ["bugun", "yangi", "qanday", "iltimos", "menga", "faqat", "yaxshi", "qidir", "tekshir"]
+        if candidate not in stop_words:
+            return candidate, f"@{candidate}"
+
+    return None
+
+async def download_telegram_file(file_id: str) -> Optional[bytes]:
+    """Telegramdan audio/voice fayl baytlarini yuklab olish"""
+    if not TELEGRAM_BOT_TOKEN or not file_id:
+        return None
+        
+    get_file_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getFile?file_id={file_id}"
+    try:
+        async with httpx.AsyncClient(timeout=25) as client:
+            resp = await client.get(get_file_url)
+            if resp.status_code == 200:
+                data = resp.json()
+                if data.get("ok"):
+                    file_path = data.get("result", {}).get("file_path")
+                    if file_path:
+                        download_url = f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{file_path}"
+                        dl_resp = await client.get(download_url)
+                        if dl_resp.status_code == 200:
+                            return dl_resp.content
+    except Exception as e:
+        logger.error(f"Telegram faylni yuklab olishda xatolik: {e}")
+    return None
+
+async def search_channel_vacancies(channel: str, display_name: str, chat_id: str):
+    """
+    Foydalanuvchi aytgan aniq kanal/guruhdan (masalan: JobLink, Rizqim, Freelance va h.k.)
+    vakansiyalarni qidirish va nomzod profiliga moslarini yetkazish.
+    """
+    await send_telegram_message(
+        f"🔎 <b>{display_name}</b> bo'yicha qidiruv boshlandi...\n"
+        "Xabarlar o'qilmoqda va sun'iy intellekt (Gemini) orqali tilingiz hamda darajangizga mosligi tekshirilmoqda...",
+        chat_id=chat_id
+    )
+    
+    # 1. Avval bugungi e'lonlarni tekshiramiz
+    vacancies = await scrape_telegram_channel(channel, today_only=True)
+    is_today = True
+    if not vacancies:
+        # Agar bugun hali yangi post bo'lmasa, so'nggi e'lonlarni olamiz
+        vacancies = await scrape_telegram_channel(channel, today_only=False)
+        is_today = False
+        
+    if not vacancies:
+        await send_telegram_message(
+            f"ℹ️ <b>{display_name}</b> kanalida hozircha Python/Backend bo'yicha e'lonlar topilmadi yoki kanal ochiq emas.",
+            chat_id=chat_id
+        )
+        return
+
+    # 2. Gemini orqali tahlil qilish
+    analysis_results = await batch_analyze_vacancies(vacancies[:10])
+    
+    matches = []
+    for vac in vacancies:
+        analysis = next((a for a in analysis_results if str(a.get("id")) == str(vac["id"])), None)
+        if analysis and analysis.get("is_relevant") and analysis.get("match_score", 0) >= MIN_MATCH_SCORE:
+            vac["analysis"] = analysis
+            matches.append(vac)
+            # Bazaga saqlash
+            mark_vacancy_seen(
+                vacancy_id=vac["id"],
+                title=vac["title"],
+                company=analysis.get("company", vac.get("company", "")),
+                url=vac["url"],
+                source=vac["source"],
+                match_score=analysis.get("match_score", 0),
+                ai_summary=analysis.get("short_summary", "")
+            )
+            
+    # 3. Natijalarni yuborish
+    date_note = "Bugungi" if is_today else "So'nggi"
+    if not matches:
+        await send_telegram_message(
+            f"ℹ️ <b>{display_name}</b> dagi {len(vacancies)} ta {date_note.lower()} e'lon tahlil qilindi, ammo nomzod profilingizga (Junior/Python) mos yuqori balli vakansiya chiqmadi.",
+            chat_id=chat_id
+        )
+        return
+
+    # Mos vakansiyalar topildi!
+    matches.sort(key=lambda x: x.get("analysis", {}).get("match_score", 0), reverse=True)
+    await send_telegram_message(
+        f"🎉 <b>{display_name}</b> kanalidan <b>{len(matches)} ta mos vakansiya</b> topildi! ({date_note} e'lonlar)",
+        chat_id=chat_id
+    )
+    
+    # 1 ta eng mos vakansiyani audio qilib yuboramiz
+    top_vac = matches[0]
+    top_analysis = top_vac.get("analysis", {})
+    top_title = top_analysis.get("role_title", top_vac.get("title", "Python Dasturchi"))
+    top_score = top_analysis.get("match_score", 0)
+    voice_txt = top_analysis.get("voice_text") or (
+        f"Salom Behruz! {display_name} dan sizga mos vakansiya topildi: {top_title}. "
+        f"Moslik: {top_score} foiz. Batafsil chatda."
+    )
+    
+    try:
+        voice_file = await generate_voice_message(voice_txt)
+        if voice_file:
+            caption = f"🎙 <b>{display_name} — Eng mos vakansiya:</b>\n<b>{top_title}</b> ({top_score}% moslik)"
+            await send_telegram_voice(voice_file, caption=caption, chat_id=chat_id)
+    except Exception as e:
+        logger.error(f"Kanal qidiruvida ovozli xabar yaratishda xato: {e}")
+        
+    for i, vac in enumerate(matches[:5], start=1):
+        try:
+            card = format_vacancy_card(vac, rank=i)
+            await send_telegram_message(card, chat_id=chat_id)
+        except Exception as e:
+            logger.error(f"Karta yuborishda xato: {e}")
+
 async def process_telegram_update(update: Dict[str, Any], trigger_scan_callback=None):
-    """Telegramdan kelgan yangilanishlarni (xabarlarni) qayta ishlash"""
+    """Telegramdan kelgan yangilanishlarni (matn va ovozli xabarlarni) qayta ishlash"""
     message = update.get("message")
     if not message:
         return
         
     chat_id = str(message.get("chat", {}).get("id"))
     text = message.get("text", "")
-    voice = message.get("voice")
+    voice = message.get("voice") or message.get("audio")
     
     # 1. /start buyrug'i
     if text == "/start":
         welcome_text = (
             "🤖 <b>Assalomu alaykum! Men Alfred — Sizning shaxsiy AI Vakansiya Agentingizman.</b>\n\n"
-            "Men 24/7 rejimda ishlayman va siz uchun O'zbekistondagi nufuzli manbalar hamda Telegram kanallardan quyidagi yo'nalishlarda yangi ishlarni qidiraman:\n"
-            "• Python (Django, FastAPI)\n"
-            "• PostgreSQL, Docker, Redis, Celery\n"
-            "• AI Agentlar va LLM integratsiyasi\n"
-            "• Junior, Intern va Freelance o'rinlari\n\n"
-            "<b>Mavjud buyruqlar:</b>\n"
-            "🔍 /scan yoki 'tekshir' — Hoziroq yangi vakansiyalarni qidirish\n"
-            "📞 /call yoki /testcall — CallMeBot orqali qo'ng'iroqni test qilish\n"
-            "📊 /status — Tizim va AI holati, oxirgi xatolik va topilgan ishlar\n"
-            "💬 Menga istalgan savolingizni yozishingiz mumkin (rezyume, intervyu, texnologiyalar haqida), men sizga o'zbek tilida yordam beraman!"
+            "Men 24/7 rejimda ishlayman va siz uchun O'zbekistondagi nufuzli manbalar hamda Telegram kanallardan Python, Django, FastAPI, AI yo'nalishlarida yangi ishlarni qidiraman.\n\n"
+            "<b>Mavjud imkoniyatlar:</b>\n"
+            "🎙 <b>Ovozli xabar:</b> Menga ovozli xabar yuboring! Men uni diqqat bilan eshitib, tushunib javob beraman yoki topshirig'ingizni bajaraman.\n"
+            "🏢 <b>Guruh nomi bo'yicha qidirish:</b> Istalgan guruh nomini @ belgisisiz ham aytsangiz bo'ladi (masalan: <i>'JobLink dan qidir'</i>, <i>'Rizqim'</i>, <i>'Freelance'</i>, <i>'Job for Junior'</i>)\n"
+            "🔍 /scan yoki 'tekshir' — Barcha Telegram kanallar va HH.uz dan yangi ishlarni qidirish\n"
+            "📞 /call — CallMeBot qo'ng'irog'ini test qilish (10s retry va FLOOD himoyasi bilan)\n"
+            "📊 /status — Tizim va AI holati\n"
+            "💬 Menga istalgan savolingizni yozishingiz yoki gapirishingiz mumkin!"
         )
         await send_telegram_message(welcome_text, chat_id=chat_id)
         return
 
-    # 2. /scan yoki 'tekshir' buyrug'i
-    if text in ["/scan", "tekshir", "Tekshir", "qidir", "Qidir"]:
-        await send_telegram_message(
-            "🔎 <b>Qidiruv orqa fonda tezkor boshlandi...</b>\n"
-            "Barcha Telegram kanallar va HH.uz tekshirilmoqda. Barcha yangi e'lonlar birgalikda (batch) sun'iy intellekt orqali tahlil qilinadi. Mos vakansiyalar topilsa darhol xabar va ovozli xabar beraman!",
-            chat_id=chat_id
-        )
-        if trigger_scan_callback:
-            # Orqa fonda skanerni ishga tushirish
-            asyncio.create_task(trigger_scan_callback())
-        return
-
-    # 3. /call yoki /testcall buyrug'i (CallMeBot qo'ng'irog'ini test qilish)
+    # 2. /call yoki /testcall buyrug'i (CallMeBot qo'ng'irog'ini test qilish)
     if text in ["/call", "/testcall", "call", "Call"]:
         await send_telegram_message(
             "📞 <b>CallMeBot orqali qo'ng'iroq testi boshlandi...</b>\n"
@@ -89,15 +272,58 @@ async def process_telegram_update(update: Dict[str, Any], trigger_scan_callback=
         await send_telegram_message(status_text, chat_id=chat_id)
         return
         
-    # 4. Ovozli xabar kelsa
+    # 4. Ovozli xabar kelsa — Gemini orqali eshitib, matnga aylantirish (transkripsiya)
     if voice:
+        file_id = voice.get("file_id")
         await send_telegram_message(
-            "🎙 Ovozli xabaringizni qabul qildim! Men sizga doim yordamga tayyorman. Menga savollaringizni matn ko'rinishida yozsangiz, darhol batafsil javob va maslahat beraman.",
+            "🎙 <i>Ovozli xabaringiz qabul qilindi, eshitilmoqda...</i>",
             chat_id=chat_id
         )
-        return
+        audio_bytes = await download_telegram_file(file_id)
+        if not audio_bytes:
+            await send_telegram_message(
+                "❌ <i>Ovozli xabarni Telegramdan yuklab bo'lmadi. Iltimos, qayta yuboring.</i>",
+                chat_id=chat_id
+            )
+            return
 
-    # 5. Oddiy matnli xabar bo'lsa (Gemini orqali suhbat)
+        transcribed = await transcribe_voice_with_gemini(audio_bytes, mime_type="audio/ogg")
+        if not transcribed:
+            await send_telegram_message(
+                "⚠️ <b>Ovozingizni aniqlab bo'lmadi.</b> Iltimos, aniqroq gapirib qayta yuboring yoki matn ko'rinishida yozing.",
+                chat_id=chat_id
+            )
+            return
+
+        await send_telegram_message(
+            f"🎙 <b>Eshitildi:</b> <i>\"{transcribed}\"</i>",
+            chat_id=chat_id
+        )
+        text = transcribed.strip()
+
+    # 5. Aniq bir kanal/guruh bo'yicha qidiruv so'ralganmi? (@ bilan yoki oddiy nomi bilan)
+    if text:
+        channel_query = resolve_channel_query(text)
+        if channel_query:
+            channel_name, display_name = channel_query
+            asyncio.create_task(search_channel_vacancies(channel_name, display_name, chat_id=chat_id))
+            return
+
+    # 6. Umumiy /scan yoki 'tekshir'/'qidir' buyrug'i
+    if text:
+        lower_text = text.lower().strip()
+        if lower_text in ["/scan", "tekshir", "qidir", "hamma vakansiyalar", "barcha vakansiyalar"] or \
+           any(cmd in lower_text for cmd in ["vakansiyalarni tekshir", "ishlarni qidir", "yangi ishlarni tekshir", "hamma ishlarni ko'r"]):
+            await send_telegram_message(
+                "🔎 <b>Qidiruv orqa fonda tezkor boshlandi...</b>\n"
+                "Barcha Telegram kanallar va HH.uz tekshirilmoqda. Barcha yangi e'lonlar birgalikda (batch) sun'iy intellekt orqali tahlil qilinadi. Mos vakansiyalar topilsa darhol xabar va ovozli xabar beraman!",
+                chat_id=chat_id
+            )
+            if trigger_scan_callback:
+                asyncio.create_task(trigger_scan_callback())
+            return
+
+    # 7. Oddiy matnli xabar bo'lsa (Gemini orqali suhbat va maslahat)
     if text:
         logger.info(f"Foydalanuvchi xabari: {text}")
         ai_reply = await chat_with_alfred(text)

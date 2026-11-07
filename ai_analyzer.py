@@ -1,24 +1,21 @@
 import httpx
 import json
 import logging
+import base64
 from typing import Dict, Any, List, Optional
 from config import GEMINI_API_KEY, CANDIDATE_PROFILE
 
 logger = logging.getLogger("Alfred.AIAnalyzer")
 
-# Modellarni ketma-ket tekshirish zanjiri:
-# 1. Foydalanuvchi talab qilgan asosiy model: gemini-2.5-flash
-# 2. Fallback: gemini-2.0-flash
-# 3. 100% bepul, kvotasi mavjud va barqaror ishlaydigan zaxira modellar
+# Modellarni ketma-ket tekshirish zanjiri (200 OK qaytargan eng tezkor va barqaror bepul modellar)
 AVAILABLE_MODELS = [
-    "gemini-2.5-flash",       # 1. Asosiy model (foydalanuvchi tanlovi)
-    "gemini-2.0-flash",       # 2. Fallback model (foydalanuvchi tanlovi)
-    "gemini-3.5-flash-lite",  # 3. Barqaror va tezkor bepul flash-lite (200 OK)
-    "gemini-3.1-flash-lite",  # 4. Zaxira flash-lite
-    "gemini-flash-latest",    # 5. Eng yangi barqaror flash
-    "gemini-3.5-flash",       # 6. Flash 3.5
-    "gemini-3-flash-preview", # 7. Flash 3 preview
-    "gemma-4-26b-a4b-it",     # 8. Gemma modeli
+    "gemini-3.5-flash-lite",   # 1. Tezkor, barqaror va bepul kvotali (200 OK)
+    "gemini-3.1-flash-lite",   # 2. Barqaror zaxira flash-lite (200 OK)
+    "gemini-flash-lite-latest",# 3. Flash-lite latest (200 OK)
+    "gemini-3.8-flash",        # 4. Yangi avlod Gemini 3.8
+    "gemini-3.5-flash",        # 5. Gemini 3.5 flash
+    "gemini-flash-latest",     # 6. Flash latest
+    "gemma-4-26b-a4b-it",      # 7. Gemma modeli (200 OK)
 ]
 
 # Tizimdagi oxirgi xatolik holatini saqlash (foydalanuvchi /status buyrug'ida ko'rishi uchun)
@@ -204,3 +201,61 @@ async def chat_with_alfred(user_message: str) -> str:
         f"🔍 <b>Texnik sabab:</b>\n<code>{last_err}</code>\n\n"
         "Birozdan so'ng qayta urinib ko'ring yoki /status buyrug'i orqali tizim holatini tekshiring."
     )
+
+async def transcribe_voice_with_gemini(audio_bytes: bytes, mime_type: str = "audio/ogg") -> Optional[str]:
+    """
+    Telegramdan kelgan ovozli xabarni (audio bytes) Gemini orqali eshitib, matnga aylantirish (transkripsiya qilish).
+    O'zbek va rus tillaridagi ovozlarni yuqori aniqlikda taniydi.
+    """
+    if not GEMINI_API_KEY:
+        logger.error("GEMINI_API_KEY topilmadi!")
+        return None
+        
+    b64_audio = base64.b64encode(audio_bytes).decode("utf-8")
+    
+    prompt = (
+        "Ushbu audio fayldagi ovozni diqqat bilan eshitib, aytilgan gapni so'zma-so'z matnga aylantir (transkripsiya qil). "
+        "Faqat eshitilgan so'zlarni qaytar, boshqa hech qanday izoh, tarjima yoki kirish so'z qo'shma."
+    )
+    
+    for model_name in AVAILABLE_MODELS:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={GEMINI_API_KEY}"
+        payload = {
+            "contents": [{
+                "role": "user",
+                "parts": [
+                    {
+                        "inlineData": {
+                            "mimeType": mime_type,
+                            "data": b64_audio
+                        }
+                    },
+                    {
+                        "text": prompt
+                    }
+                ]
+            }],
+            "generationConfig": {
+                "temperature": 0.1
+            }
+        }
+        
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                resp = await client.post(url, json=payload)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    candidates = data.get("candidates", [])
+                    if candidates:
+                        parts = candidates[0].get("content", {}).get("parts", [])
+                        if parts:
+                            text = parts[0].get("text", "").strip()
+                            if text:
+                                logger.info(f"Ovozli xabar transkripsiyasi muvaffaqiyatli ({model_name}): {text}")
+                                return text
+                else:
+                    logger.warning(f"Ovoz transkripsiyasida {model_name} HTTP {resp.status_code}: {resp.text[:100]}")
+        except Exception as e:
+            logger.warning(f"Ovoz transkripsiyasida {model_name} xatoligi: {e}")
+            
+    return None

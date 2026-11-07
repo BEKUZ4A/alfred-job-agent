@@ -15,8 +15,10 @@ Assalomu alaykum! Ushbu loyiha siz uchun **kompyuteringiz o'chiq turganda ham** 
    - 📞 **Qo'ng'iroq qiladi (FLOOD va Retry himoyasi bilan):** CallMeBot orqali Telegramingizga qo'ng'iroq chaqiradi. Agar server band (FLOOD) bo'lsa, 10 soniya kutib qayta urinadi. Agar baribir o'tmasa, darhol Telegram orqali ogohlantirib, eng mos vakansiyaning ovozli va matnli xabarini yetkazadi. (Botda /call buyrug'i orqali ham test qilish mumkin).
    - 🎙 **Ovozli xabar yuboradi:** Eng yaxshi vakansiyaning qisqa mazmunini o'zbek tilida gapirib beradi (`uz-UZ-MadinaNeural`).
    - 📩 **Chiroyli xabar:** Barcha mos ishlarni havolasi va maoshi bilan chiroyli formatda jo'natadi.
-4. **Suhbatlashadi:**
-   - Botga savol yozsangiz, Gemini sun'iy intellekti yordamida o'zbek tilida maslahat beradi.
+4. **Ovozli xabarlarni tushunadi va Suhbatlashadi:**
+   - 🎙 **Ovozli xabarni o'qish (Audio-to-Text):** Botga Telegram orqali ovozli xabar yuborsangiz, Gemini AI uni diqqat bilan eshitib, matnga aylantiradi va topshirig'ingizni bajaradi.
+   - 🏢 **Guruh nomi bo'yicha qidirish:** Ovozli yoki yozma tarzda guruh nomini @ belgisisiz ham aytsangiz (masalan: *"JobLink dan qidir"*, *"Rizqim"*, *"Freelance"*, *"Job for Junior"*), darhol o'sha kanaldagi vakansiyalarni tahlil qilib, moslarini taqdim etadi.
+   - 💬 **Karyera maslahatchisi:** Botga savol yozsangiz yoki gapirsangiz, Gemini sun'iy intellekti yordamida o'zbek tilida maslahat beradi.
 
 ---
 
