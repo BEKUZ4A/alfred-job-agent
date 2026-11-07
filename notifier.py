@@ -159,22 +159,40 @@ async def send_telegram_voice(file_path: str, caption: str = "", chat_id: str = 
         
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendVoice"
     
+    # Audio MIME turini aniqlash
+    if file_path.endswith(".ogg"):
+        mime_type = "audio/ogg"
+    elif file_path.endswith(".wav"):
+        mime_type = "audio/wav"
+    else:
+        mime_type = "audio/mpeg"
+
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
+        async with httpx.AsyncClient(timeout=35) as client:
             with open(file_path, "rb") as f:
-                files = {"voice": (os.path.basename(file_path), f, "audio/mpeg")}
+                files = {"voice": (os.path.basename(file_path), f, mime_type)}
                 data = {
                     "chat_id": target_chat_id,
                     "caption": caption[:1024],
                     "parse_mode": "HTML"
                 }
                 resp = await client.post(url, data=data, files=files)
-                return resp.status_code == 200
+                if resp.status_code == 200:
+                    return True
+                else:
+                    logger.warning(f"sendVoice HTTP {resp.status_code}: {resp.text[:120]}, sendAudio bilan urinilmoqda...")
+
+            # Agar sendVoice qabul qilmasa (masalan, WAV format bo'lsa), sendAudio orqali yuborish
+            audio_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendAudio"
+            with open(file_path, "rb") as f2:
+                a_files = {"audio": (os.path.basename(file_path), f2, mime_type)}
+                a_resp = await client.post(audio_url, data=data, files=a_files)
+                return a_resp.status_code == 200
     except Exception as e:
         logger.error(f"Telegram audio yuborishda xatolik: {e}")
         return False
     finally:
-        # Temp faylni o'chirish
+        # Temp faylni xavfsiz tozalash
         try:
             if os.path.exists(file_path):
                 os.remove(file_path)
@@ -269,9 +287,9 @@ async def notify_user_about_vacancies(matches: List[Dict[str, Any]]):
     top_posted_at = format_posted_at(top_vacancy.get("posted_at", ""))
 
     voice_text = top_analysis.get("voice_text") or (
-        f"Salom Behruz! Sizga yangi mos e'lon topildi: {top_title}. "
-        f"Kompaniya/Mijoz: {top_company}. Moslik: {top_score} foiz. "
-        f"E'lon qilingan: {top_posted_at}. Batafsil Telegram chatda."
+        f"Assalomu alaykum Behruzbek! Sizga juda mos yangi taklif topildi: {top_title}. "
+        f"Kompaniya {top_company} sizning ko'nikmalaringizga to'liq mos keladi. "
+        f"Barcha batafsil ma'lumotlarni Telegram chatimizda qoldirdim, bemalol ko'rib chiqishingiz mumkin."
     )
     
     # 1. Qo'ng'iroq qilish (make_call: faqat 8:00 - 20:00 oralig'ida)

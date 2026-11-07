@@ -30,8 +30,14 @@ MIN_MATCH_SCORE = int(os.getenv("MIN_MATCH_SCORE", "65"))
 # Server porti (Render.com avtomatik PORT o'zgaruvchisini beradi)
 PORT = int(os.getenv("PORT", "8000"))
 
-# O'zbek ovozi
-EDGE_TTS_VOICE = os.getenv("EDGE_TTS_VOICE", "uz-UZ-MadinaNeural")
+# Gemini Native Audio TTS sozlamalari (Asosiy tabiiy ovoz)
+GEMINI_TTS_MODEL = os.getenv("GEMINI_TTS_MODEL", "gemini-2.5-flash-preview-tts")
+GEMINI_TTS_VOICE = os.getenv("GEMINI_TTS_VOICE", "Aoede")  # "Aoede" (yoqimli, tabiiy) yoki "Charon" (jiddiy erkak ovozi)
+
+# Zaxira ovoz sozlamalari (Sozlangan Edge-TTS)
+EDGE_TTS_VOICE = os.getenv("EDGE_TTS_VOICE", "uz-UZ-SardorNeural")  # erkak ovozi
+EDGE_TTS_RATE = os.getenv("EDGE_TTS_RATE", "+8%")  # biroz jonliroq tezlik
+EDGE_TTS_PITCH = os.getenv("EDGE_TTS_PITCH", "-2Hz")  # biroz chuqurroq, yoqimli tembr
 
 # Kuzatiladigan 9 ta ommabop Telegram kanallar ro'yxati
 TELEGRAM_CHANNELS = [

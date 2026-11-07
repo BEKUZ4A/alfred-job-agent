@@ -53,8 +53,11 @@ BAHOLASH VA FILTRLASH QOIDALARI:
    - 60-79: Boshlang'ich yoki 1 yilgacha tajribali yaxshi taklif.
    - 0-59: Senior, Team Lead, 3+ yil tajriba talab qilgan, yoki Python/Backend bilan aloqasi yo'q ishlar.
 
-4. `voice_text` maydoni Telegram ovozli xabarga aylantiriladi. U o'zbek tilida, do'stona, qisqa va aniq (15-20 soniyalik) bo'lsin.
-Masalan: "Salom Behruz! Sizga mos yangi [vakansiya / frilans buyurtma] topildi: [Nomi]. Byudjet/Maosh: [Narxi]. Batafsil Telegram chatda."
+4. `voice_text` maydoni Telegram ovozli xabarga aylantiriladi:
+   - Xuddi yaqin do'stiga yangilik aytayotgandek juda samimiy, do'stona va silliq 3-4 gapdan iborat bo'lsin.
+   - Boshlanishi: "Assalomu alaykum Behruzbek! Sizga juda mos [vakansiya / frilans buyurtma] chiqdi..."
+   - Unda HECH QACHON yulduzcha (*), panjara (#), chiziqcha (-), havolalar (http/link), emoji nomlari bo'lmasin. Faqat og'zaki nutqda ravon o'qiladigan toza jumlalar bo'lsin.
+   - Masalan: "Assalomu alaykum Behruzbek! Sizga mos yangi vakansiya chiqdi: [Nomi]. Kompaniya [Nomi] sizning FastAPI va Python bo'yicha ko'nikmalaringizga to'liq mos keladi. Barcha ma'lumotlarni chatda qoldirdim."
 
 JAVOBNI FAQAT QUYIDAGI JSON MASSIV (ARRAY) FORMATIDA QAYTAR (boshqa hech qanday kirish yoki tushuntirish so'zlarisiz):
 [
@@ -69,7 +72,7 @@ JAVOBNI FAQAT QUYIDAGI JSON MASSIV (ARRAY) FORMATIDA QAYTAR (boshqa hech qanday 
     "tech_stack": ["Python", "FastAPI", "Telegram Bot"],
     "salary": "400$ - 700$ yoki Kelishilgan narxda",
     "short_summary": "O'zbek tilida 1-2 gapda e'lon haqida xulosa",
-    "voice_text": "Ovozli xabar uchun o'zbekcha 2-3 jumlali matn",
+    "voice_text": "Assalomu alaykum Behruzbek! Siz uchun ajoyib yangi e'lon chiqdi...",
     "reason": "Nima uchun ushbu ish nomzodga mos kelishining sababi"
   }}
 ]
@@ -107,7 +110,8 @@ async def call_gemini_api(prompt: str, system_instruction: str = "") -> Optional
         }
         
         try:
-            async with httpx.AsyncClient(timeout=30) as client:
+            headers = {"User-Agent": "AlfredJobAgent/1.0", "Connection": "close"}
+            async with httpx.AsyncClient(timeout=30, headers=headers) as client:
                 resp = await client.post(url, json=payload)
                 if resp.status_code == 200:
                     data = resp.json()
@@ -251,7 +255,8 @@ async def transcribe_voice_with_gemini(audio_bytes: bytes, mime_type: str = "aud
         }
         
         try:
-            async with httpx.AsyncClient(timeout=30) as client:
+            headers = {"User-Agent": "AlfredJobAgent/1.0", "Connection": "close"}
+            async with httpx.AsyncClient(timeout=30, headers=headers) as client:
                 resp = await client.post(url, json=payload)
                 if resp.status_code == 200:
                     data = resp.json()
@@ -302,3 +307,32 @@ async def generate_freelance_pitch(title: str, summary: str, source: str = "") -
         "tez va yuqori sifatda qilib bera olaman. Loyihalarim va portfolio bilan GitHub profilimda tanishishingiz mumkin: "
         "https://github.com/BEKUZ4A . Aloqaga chiqishingizni kutaman!"
     )
+
+async def prepare_conversational_voice_text(raw_or_summary: str) -> str:
+    """
+    Ovozli xabar uchun matnni xuddi do'stiga yangilik aytayotgandek silliq,
+    samimiy 3-4 gapdan iborat toza so'zlashuv nutqiga aylantiradi.
+    Yulduzcha, chiziqcha, havola yoki emoji nomlarini o'z ichiga olmaydi.
+    """
+    prompt = f"""
+    Sen "Alfred" - foydalanuvchi Behruzbekning shaxsiy AI assistenti va yaqin do'stisan.
+    Quyidagi ish yoki xabar ma'lumotini diqqat bilan o'rganib, Telegram ovozli xabari (audio) uchun o'zbek tilida juda samimiy, do'stona, silliq 3-4 gapdan iborat jonli so'zlashuv nutqini tayyorla:
+
+    MA'LUMOT:
+    {raw_or_summary}
+
+    QAT'IY QOIDALAR:
+    1. Nutq albatta: "Assalomu alaykum Behruzbek! ..." deb boshlansin.
+    2. Xuddi yaqin do'stingizga quvonchli yangilik aytayotgandek samimiy, jonli va professional suhandon ohangida bo'lsin.
+    3. Maksimal 3-4 gapdan oshmasin (15-20 soniyada erkin o'qiladigan bo'lsin).
+    4. HECH QACHON "yulduzcha", "chiziqcha", "https", "ssilka", "link", "havola", "emoji", belgilar (*, -, #, /) yoki emojilar nomini ishlatma!
+    5. Faqat toza, ovoz chiqarib o'qiladigan matnni qaytar (boshqa hech qanday izoh, sarlavha yoki qo'shimcha so'zlarsiz).
+    """
+    script = await call_gemini_api(prompt)
+    if script:
+        return script.strip()
+    return (
+        "Assalomu alaykum Behruzbek! Siz uchun ajoyib yangi taklif topildi. "
+        "Barcha batafsil ma'lumotlarni Telegram chatimizda qoldirdim, bemalol ko'rib chiqishingiz mumkin."
+    )
+

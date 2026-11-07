@@ -195,8 +195,8 @@ async def search_channel_vacancies(channel: str, display_name: str, chat_id: str
     top_title = top_analysis.get("role_title", top_vac.get("title", "Python Dasturchi"))
     top_score = top_analysis.get("match_score", 0)
     voice_txt = top_analysis.get("voice_text") or (
-        f"Salom Behruz! {display_name} dan sizga mos vakansiya topildi: {top_title}. "
-        f"Moslik: {top_score} foiz. Batafsil chatda."
+        f"Assalomu alaykum Behruzbek! {display_name} dan sizga juda mos yangi taklif topildi: {top_title}. "
+        f"Moslik darajasi: {top_score} foiz. Batafsil ma'lumotlarni chatda ko'rib chiqishingiz mumkin."
     )
     
     try:

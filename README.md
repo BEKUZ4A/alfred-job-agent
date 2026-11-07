@@ -15,7 +15,10 @@ Assalomu alaykum! Ushbu loyiha siz uchun **kompyuteringiz o'chiq turganda ham** 
    - Har bir ishni sizning profilingizga (Junior / Intern / Freelance / Python / AI) mosligini 0-100% oraliqda tekshiradi.
 3. **Sizga xabar beradi:**
    - 📞 **Qo'ng'iroq qiladi (FLOOD va Retry himoyasi bilan):** CallMeBot orqali Telegramingizga qo'ng'iroq chaqiradi. Agar server band bo'lsa, 10 soniya kutib qayta urinadi.
-   - 🎙 **Ovozli xabar yuboradi:** Eng yaxshi vakansiyaning qisqa mazmunini o'zbek tilida gapirib beradi (`uz-UZ-MadinaNeural`).
+   - 🎙 **Tabiiy Ovozli xabar yuboradi (Gemini Native Audio TTS + Edge-TTS):**
+     - **Asosiy ovoz:** Google Gemini Native Audio TTS (`gemini-2.5-flash-preview-tts`), `Aoede` (tabiiy, yoqimli) yoki `Charon` ovozi bilan o'zbek tilida sof suhandon kabi o'qiydi.
+     - **Zaxira ovoz:** Edge-TTS (`uz-UZ-SardorNeural`, `rate="+8%"`, `pitch="-2Hz"`) bilan robotdek emas, jonli tembrda o'qiydi.
+     - **Do'stona so'zlashuv nutqi:** Ovoz chiqarishdan oldin Gemini 3-4 gapdan iborat samimiy, do'stona nutq tayyorlaydi (*"Assalomu alaykum Behruzbek!..."*), unda hech qachon yulduzcha, chiziqcha, havola yoki emoji nomlari o'qilmaydi!
    - 📩 **Chiroyli format:** `[🏢 VAKANSIYA]` / `[💰 FRILANS BUYURTMA]` va `[HH.UZ]`, `[OLX.UZ]`, `[TELEGRAM]` belgilari bilan to'liq ma'lumotlarni yuboradi.
 4. **Ovozli boshqaruv va Frilans Taklif generatori:**
    - 🎙 **Ovozli xabarni eshitish:** Botga ovozli xabar yuborsangiz, Gemini AI orqali uni eshitib tushunadi va buyruqni bajaradi.
