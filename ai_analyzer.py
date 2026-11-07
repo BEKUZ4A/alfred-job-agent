@@ -33,34 +33,44 @@ def set_last_error(msg: str):
 
 BATCH_SYSTEM_INSTRUCTION = f"""
 Sen "Alfred" - professional IT-rekruter va shaxsiy karyera tahlilchisisan.
-Vazifang berilgan bir nechta ish e'lonlarini (vakansiyalarni) quyidagi nomzod profiliga qanchalik mos kelishini sinchkovlik bilan tahlil qilish:
+Vazifang berilgan ish e'lonlari va frilans buyurtmalarni quyidagi nomzod profiliga qanchalik mos kelishini sinchkovlik bilan tahlil qilish:
 
 NOMZODNING PROFILI:
 {CANDIDATE_PROFILE}
 
-BAHOLASH QOIDALARI:
-1. Moslik bali (0 dan 100 gacha):
-   - 80-100: Junior/Intern/Freelance Python, Django, FastAPI, PostgreSQL, Docker, AI Agentlar talab qilingan ajoyib vakansiya.
-   - 60-79: Python backend bo'yicha boshlang'ich yoki 1 yilgacha tajribali yaxshi vakansiya.
-   - 0-59: Senior, Team Lead, 3+ yil tajriba talab qilgan, yoki Python bilan aloqasi yo'q (PHP, Java, Node.js va h.k.) ishlar.
-2. Agar ish Senior/Lead bo'lsa yoki Python bo'lmasa -> `is_relevant: false`, `match_score` 40 dan past bo'lishi shart.
-3. `voice_text` maydoni Telegram ovozli xabarga aylantiriladi. U o'zbek tilida, do'stona, qisqa va aniq (15-20 soniyalik) bo'lsin.
-Masalan: "Salom Behruz! Sizga mos yangi Junior Python vakansiyasi topildi. Kompaniya: [Nomi]. Asosiy talablar: FastAPI va PostgreSQL. Batafsil Telegram chatda."
+BAHOLASH VA FILTRLASH QOIDALARI:
+1. BUYURTMACHI VA DASTURCHI REKLAMASINI AJRATISH (JUDA MUHIM):
+   - Agar e'lon beruvchi o'z xizmatlarini reklama qilayotgan boshqa dasturchi/agentlik bo'lsa (masalan: "Bot yasab beramiz", "Sayt ochamiz", "Bot sotiladi", "Услуги создания сайтов", "Разработка ботов на заказ" va h.k.):
+     -> BUNI QAT'IY RAD ET (`is_relevant: false`, `match_score: 0`). Bizning foydalanuvchimiz dasturchi, unga boshqa dasturchining xizmati emas, BUYURTMACHI yoki ISH BERUVCHI kerak!
+   - Faqat haqiqiy ISH BERUVCHI (vakansiya: kompaniyaga xodim kerak) yoki BUYURTMACHI (frilans loyiha: "Bot yasatmoqchiman", "Sayt kerak", "Dasturchi izlayapman", "Нужен бот/сайт/парсер") yozgan e'lonlarni qabul qil!
+
+2. E'LON TURI (job_type):
+   - "vacancy": To'liq yoki yarim stavkali uzoq muddatli ish, ofis/masofaviy kompaniya vakansiyasi.
+   - "freelance": Bir martalik buyurtma, frilans loyiha, bot/sayt/skript yasatishga mijoz izlayotgan buyurtma.
+
+3. Moslik bali (0 dan 100 gacha):
+   - 80-100: Junior/Intern/Freelance Python, Django, FastAPI, PostgreSQL, Docker, Telegram bot, Web scraping, AI Agentlar talab qilingan ajoyib ish yoki frilans buyurtma.
+   - 60-79: Boshlang'ich yoki 1 yilgacha tajribali yaxshi taklif.
+   - 0-59: Senior, Team Lead, 3+ yil tajriba talab qilgan, yoki Python/Backend bilan aloqasi yo'q ishlar.
+
+4. `voice_text` maydoni Telegram ovozli xabarga aylantiriladi. U o'zbek tilida, do'stona, qisqa va aniq (15-20 soniyalik) bo'lsin.
+Masalan: "Salom Behruz! Sizga mos yangi [vakansiya / frilans buyurtma] topildi: [Nomi]. Byudjet/Maosh: [Narxi]. Batafsil Telegram chatda."
 
 JAVOBNI FAQAT QUYIDAGI JSON MASSIV (ARRAY) FORMATIDA QAYTAR (boshqa hech qanday kirish yoki tushuntirish so'zlarisiz):
 [
   {{
     "id": "e'lon_id",
     "is_relevant": true,
+    "job_type": "vacancy",
     "match_score": 85,
-    "role_title": "Junior Python Developer",
-    "company": "Kompaniya nomi",
-    "experience_level": "Junior / Intern",
-    "tech_stack": ["Python", "FastAPI", "PostgreSQL"],
-    "salary": "400$ - 700$ yoki Ko'rsatilmagan",
-    "short_summary": "O'zbek tilida 1-2 gapda vakansiya haqida xulosa",
+    "role_title": "Junior Python Developer / Telegram Bot Loyihasi",
+    "company": "Kompaniya yoki Buyurtmachi",
+    "experience_level": "Junior / Frilans",
+    "tech_stack": ["Python", "FastAPI", "Telegram Bot"],
+    "salary": "400$ - 700$ yoki Kelishilgan narxda",
+    "short_summary": "O'zbek tilida 1-2 gapda e'lon haqida xulosa",
     "voice_text": "Ovozli xabar uchun o'zbekcha 2-3 jumlali matn",
-    "reason": "Nima uchun ushbu vakansiya nomzodga mos kelishining sababi"
+    "reason": "Nima uchun ushbu ish nomzodga mos kelishining sababi"
   }}
 ]
 """
@@ -259,3 +269,36 @@ async def transcribe_voice_with_gemini(audio_bytes: bytes, mime_type: str = "aud
             logger.warning(f"Ovoz transkripsiyasida {model_name} xatoligi: {e}")
             
     return None
+
+async def generate_freelance_pitch(title: str, summary: str, source: str = "") -> str:
+    """
+    Frilans buyurtmasi uchun mijozga (buyurtmachiga) yuborishga mo'ljallangan
+    qisqa, ishonarli, xushmuomala va professional tijoriy taklif (Cover Letter / Pitch) yozish.
+    """
+    prompt = f"""
+    Sen "Alfred" professional AI karyera agentisan. Foydalanuvchi Behruz (GitHub: https://github.com/BEKUZ4A).
+    U tajribali Python, Django, FastAPI, AI Agentlar va Telegram botlar yaratuvchi dasturchi.
+    
+    Quyidagi frilans buyurtma / ish e'loni bo'yicha mijozga yuboriladigan qisqa, nihoyatda ishonarli va professional tijoriy taklif (Pitch / Cover Letter) yoz:
+    
+    BUYURTMA MA'LUMOTLARI:
+    - Nomi: {title}
+    - Mazmuni: {summary}
+    - Manba: {source}
+    
+    TAKRIF TALABLARI:
+    1. Til: Agar e'lon rus tilida bo'lsa rus tilida, o'zbek tilida bo'lsa o'zbek tilida yoz.
+    2. Mazmuni: "Assalomu alaykum! Men bu bot/sayt/loyihani zamonaviy AI agentlar va Python/Django/FastAPI yordamida tez, xavfsiz va yuqori sifatli qilib bera olaman."
+    3. Albatta GitHub profil havolasini qo'sh: https://github.com/BEKUZ4A
+    4. Qisqa va londa (3-4 jumla), ortiqcha gaplarsiz, mijoz darhol bog'lanishi uchun qulay va ishonchli shaklda bo'lsin.
+    
+    Faqat mijozga yuboriladigan taklif matnini qaytar.
+    """
+    pitch = await call_gemini_api(prompt)
+    if pitch:
+        return pitch.strip()
+    return (
+        "Assalomu alaykum! Ushbu bot/sayt loyihasini zamonaviy AI agentlar va Python/FastAPI/Django yordamida "
+        "tez va yuqori sifatda qilib bera olaman. Loyihalarim va portfolio bilan GitHub profilimda tanishishingiz mumkin: "
+        "https://github.com/BEKUZ4A . Aloqaga chiqishingizni kutaman!"
+    )

@@ -23,9 +23,21 @@ def init_db():
         source TEXT,
         match_score INTEGER,
         ai_summary TEXT,
+        job_type TEXT DEFAULT 'vacancy',
+        raw_text TEXT DEFAULT '',
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     """)
+    # Eski jadvalga yangi ustunlarni xatosiz qo'shish (agar bo'lmasa)
+    try:
+        cursor.execute("ALTER TABLE seen_vacancies ADD COLUMN job_type TEXT DEFAULT 'vacancy'")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        cursor.execute("ALTER TABLE seen_vacancies ADD COLUMN raw_text TEXT DEFAULT ''")
+    except sqlite3.OperationalError:
+        pass
+
     conn.commit()
     conn.close()
 
@@ -38,16 +50,35 @@ def is_vacancy_seen(vacancy_id: str) -> bool:
     conn.close()
     return row is not None
 
-def mark_vacancy_seen(vacancy_id: str, title: str, company: str, url: str, source: str, match_score: int, ai_summary: str):
-    """Vakansiyani ko'rilgan deb belgilash"""
+def mark_vacancy_seen(
+    vacancy_id: str, 
+    title: str, 
+    company: str, 
+    url: str, 
+    source: str, 
+    match_score: int, 
+    ai_summary: str,
+    job_type: str = "vacancy",
+    raw_text: str = ""
+):
+    """Vakansiya yoki frilans buyurtmani ko'rilgan deb belgilash"""
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("""
-    INSERT OR REPLACE INTO seen_vacancies (id, title, company, url, source, match_score, ai_summary, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    """, (vacancy_id, title, company, url, source, match_score, ai_summary, datetime.utcnow().isoformat()))
+    INSERT OR REPLACE INTO seen_vacancies (id, title, company, url, source, match_score, ai_summary, job_type, raw_text, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (vacancy_id, title, company, url, source, match_score, ai_summary, job_type, raw_text, datetime.utcnow().isoformat()))
     conn.commit()
     conn.close()
+
+def get_vacancy_by_id(vacancy_id: str) -> Optional[Dict]:
+    """ID bo'yicha vakansiya/buyurtma tafsilotlarini olish"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM seen_vacancies WHERE id = ?", (vacancy_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None
 
 def get_recent_vacancies(limit: int = 10) -> List[Dict]:
     """Oxirgi topilgan vakansiyalar ro'yxatini olish"""

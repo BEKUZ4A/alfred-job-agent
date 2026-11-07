@@ -2,8 +2,12 @@ import httpx
 import bs4
 import hashlib
 import logging
-from datetime import datetime, timezone
+import asyncio
+import re
+import urllib.parse
+from datetime import datetime, timezone, timedelta
 from typing import List, Dict
+from curl_cffi import requests as cffi_requests
 from config import TELEGRAM_CHANNELS, TASHKENT_TZ
 
 logger = logging.getLogger("Alfred.Scraper")
@@ -14,8 +18,13 @@ HEADERS = {
     "Accept-Language": "uz,ru;q=0.9,en;q=0.8"
 }
 
+HH_API_HEADERS = {
+    "User-Agent": "AlfredJobAgent/1.0 (contact@alfredbot.uz)",
+    "Accept": "application/json"
+}
+
 def clean_text(raw_text: str) -> str:
-    """Matnni ortiqcha bo'shliqlardan tozalash"""
+    """Matnni ortiqcha bo'shliq va teglardan tozalash"""
     if not raw_text:
         return ""
     return " ".join(raw_text.split())
@@ -24,29 +33,25 @@ def make_hash_id(source: str, identifier: str) -> str:
     """Har bir vakansiyaga yagona ID generatsiya qilish"""
     return hashlib.md5(f"{source}:{identifier}".encode("utf-8")).hexdigest()
 
-def is_published_today(dt_str: str) -> bool:
+def is_within_last_24_hours(dt_str: str) -> bool:
     """
-    Xabar bugungi sanada e'lon qilinganligini tekshirish (Toshkent vaqti UTC+5 bo'yicha).
-    Kecha yoki undan oldin chiqqan eski xabarlar qat'iy o'tkazib yuboriladi.
+    Xabar so'nggi 24 soat ichida e'lon qilinganligini tekshirish.
+    Render yoki server qayta yonganda eski e'lonlar qayta yuborilmasligi uchun.
     """
     if not dt_str:
-        return False
+        return True
     try:
         dt = datetime.fromisoformat(dt_str)
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
-        post_date = dt.astimezone(TASHKENT_TZ).date()
-        today_date = datetime.now(TASHKENT_TZ).date()
-        return post_date >= today_date
-    except Exception as e:
-        logger.warning(f"Sana tekshirishda ogohlantirish ({dt_str}): {e}")
-        return False
+        now = datetime.now(timezone.utc)
+        diff = now - dt
+        return timedelta(0) <= diff <= timedelta(hours=24)
+    except Exception:
+        return True
 
 def format_posted_at(dt_str: str) -> str:
-    """
-    UTC ISO vaqt satrini Toshkent vaqtiga (UTC+5) o'tkazib, o'qilishi oson formatda qaytarish.
-    Masalan: "06-11-2026 10:30 (Toshkent)"
-    """
+    """Vaqtni Toshkent vaqti (UTC+5) bo'yicha qulay formatda qaytarish"""
     if not dt_str:
         return "Noma'lum"
     try:
@@ -56,25 +61,50 @@ def format_posted_at(dt_str: str) -> str:
         dt_tash = dt.astimezone(TASHKENT_TZ)
         return dt_tash.strftime("%d-%m-%Y %H:%M")
     except Exception:
-        return "Noma'lum"
+        return dt_str if dt_str else "Noma'lum"
 
-def is_potentially_relevant(text: str) -> bool:
+def is_seller_advertisement(text: str) -> bool:
     """
-    Tezkor kalit so'zlar bo'yicha dastlabki filtr (Gemini API kvotasini tejash uchun).
-    Foydalanuvchi profili: Python, Django, FastAPI, Backend, AI, Junior, Intern, Dasturchi.
+    Dasturchilarning o'z xizmatlarini reklama qilayotgan e'lonlarini filtrlab tashlash.
+    Faqat haqiqiy ish beruvchi yoki mijoz yozgan e'lonlarni qoldiradi.
     """
     t = text.lower()
     
-    # Python yoki dasturlashga aloqador kalit so'zlar
+    # Ish beruvchi yoki buyurtmachi belgilari
+    buyer_indicators = [
+        "kerak", "qidirilmoqda", "qidiryapmiz", "izlayapmiz", "izlayapman",
+        "yasatmoqchiman", "yozdirmoqchiman", "ishga taklif", "vakansiya", "hodim kerak",
+        "нужен", "требуется", "ищем", "заказчик", "требуются", "#loyiha", "#hodim", "#ishbori", "#ishjoyi"
+    ]
+    if any(b in t for b in buyer_indicators):
+        # Agar "kerak" yoki "izlayapmiz" bo'lsa, bu mijoz / ish beruvchi bo'lishi ehtimoli yuqori
+        return False
+        
+    # Sotuvchi / Dasturchi o'z xizmatini reklama qilish belgilari
+    seller_indicators = [
+        "bot yasab beramiz", "bot yasab beraman", "sayt ochib beramiz", "sayt ochib beraman",
+        "xizmatlarimiz", "xizmat korsatish", "xizmat ko'rsatamiz", "xizmat ko'rsatish",
+        "sotiladi", "kino bot sotiladi", "arzon narxda",
+        "услуги создания", "делаем на заказ", "разработка под ключ", "готовый бот"
+    ]
+    return any(s in t for s in seller_indicators)
+
+def is_potentially_relevant(text: str) -> bool:
+    """
+    Tezkor kalit so'zlar bo'yicha dastlabki filtr (Python, Backend, Bot, Sayt, AI).
+    """
+    t = text.lower()
+    
     python_keywords = [
         "python", "django", "fastapi", "flask", 
         "backend", "bekend", "py", "ai", "llm", 
         "junior", "intern", "amaliyot", "stajyor", "stajirovka",
-        "dasturchi", "developer", "разработчик"
+        "dasturchi", "developer", "разработчик",
+        "telegram bot", "телеграм бот", "bot kerak", "бот нужен", "парсер", "parser",
+        "sayt", "сайт", "web dasturchi"
     ]
     has_tech = any(k in t for k in python_keywords)
     
-    # Aniq Senior/Lead yoki mutlaqo boshqa sohalar (agar junior/intern bo'lmasa)
     if "lead" in t and "junior" not in t and "intern" not in t:
         return False
     if "senior" in t and "junior" not in t and "intern" not in t:
@@ -84,107 +114,201 @@ def is_potentially_relevant(text: str) -> bool:
         
     return has_tech
 
-async def scrape_hh_uz() -> List[Dict]:
-    """HH.uz saytidan bugungi Python vakansiyalarini yig'ish"""
+def _fetch_hh_uz_sync() -> List[Dict]:
+    """HH.uz dan rasmiy API va curl_cffi zaxirasi orqali oxirgi 24 soatlik ishlarni yig'ish"""
     vacancies = []
+    seen_ids = set()
     
-    # 1-usul: Rasmiy HH.ru API
+    # 1. Rasmiy HH.ru API orqali so'rov yuborish
     try:
-        api_url = "https://api.hh.ru/vacancies?area=97&text=Python&per_page=15&order_by=publication_time"
-        async with httpx.AsyncClient(timeout=10, headers={"User-Agent": "AlfredJobBot/1.0 (behruz@jobhunter.uz)"}) as client:
-            resp = await client.get(api_url)
-            if resp.status_code == 200:
-                data = resp.json()
-                for item in data.get("items", []):
-                    # Faqat bugungi e'lonlarni tekshiramiz
-                    pub_at = item.get("published_at", "")
-                    if pub_at and not is_published_today(pub_at):
-                        continue
-                        
-                    vac_id = make_hash_id("hh_uz", str(item.get("id")))
-                    title = item.get("name", "Noma'lum")
-                    company = item.get("employer", {}).get("name", "Noma'lum kompaniya")
-                    url = item.get("alternate_url", f"https://hh.uz/vacancy/{item.get('id')}")
+        api_url = "https://api.hh.ru/vacancies"
+        params = {
+            "area": "97",
+            "text": "Python OR Django OR FastAPI OR AI OR Backend OR Telegram bot OR Парсер",
+            "period": "1",
+            "per_page": "20"
+        }
+        resp = httpx.get(api_url, params=params, headers=HH_API_HEADERS, timeout=10)
+        if resp.status_code == 200:
+            data = resp.json()
+            for item in data.get("items", []):
+                v_id = str(item.get("id"))
+                if v_id in seen_ids:
+                    continue
+                seen_ids.add(v_id)
+                
+                title = item.get("name", "Noma'lum")
+                company = item.get("employer", {}).get("name", "Noma'lum kompaniya")
+                url = item.get("alternate_url", f"https://hh.uz/vacancy/{v_id}")
+                pub_at = item.get("published_at", "")
+                
+                # To'liq talablarni alohida https://api.hh.ru/vacancies/{id} dan olish
+                full_desc = ""
+                try:
+                    full_resp = httpx.get(f"https://api.hh.ru/vacancies/{v_id}", headers=HH_API_HEADERS, timeout=8)
+                    if full_resp.status_code == 200:
+                        f_data = full_resp.json()
+                        raw_desc = f_data.get("description", "")
+                        soup = bs4.BeautifulSoup(raw_desc, "html.parser")
+                        full_desc = soup.get_text(separator="\n", strip=True)
+                        skills = [s.get("name") for s in f_data.get("key_skills", []) if s.get("name")]
+                        if skills:
+                            full_desc += "\nKo'nikmalar: " + ", ".join(skills)
+                except Exception:
+                    pass
                     
+                if not full_desc:
                     snippet = item.get("snippet", {})
-                    req = snippet.get("requirement") or ""
-                    resp_desc = snippet.get("responsibility") or ""
-                    salary = item.get("salary")
-                    salary_str = ""
-                    if salary:
-                        from_s = salary.get("from")
-                        to_s = salary.get("to")
-                        cur = salary.get("currency", "")
-                        salary_str = f"{from_s or ''} - {to_s or ''} {cur}".strip()
+                    full_desc = f"{snippet.get('requirement', '')} {snippet.get('responsibility', '')}"
                     
-                    full_text = f"Sarlavha: {title}\nKompaniya: {company}\nMaosh: {salary_str}\nTalablar: {req}\nVazifalar: {resp_desc}"
-                    
-                    vacancies.append({
-                        "id": vac_id,
-                        "title": title,
-                        "company": company,
-                        "url": url,
-                        "text": clean_text(full_text),
-                        "source": "hh.uz",
-                        "posted_at": pub_at  # ✅ E'lon qilingan vaqt saqlandi
-                    })
+                vacancies.append({
+                    "id": make_hash_id("hh_uz", v_id),
+                    "title": title,
+                    "company": company,
+                    "url": url,
+                    "text": clean_text(f"{title} | {company} | {full_desc}")[:2500],
+                    "source": "hh.uz",
+                    "job_type": "vacancy",
+                    "posted_at": pub_at
+                })
+                
+            if vacancies:
+                logger.info(f"HH.ru API orqali {len(vacancies)} ta vakansiya olindi.")
                 return vacancies
     except Exception as e:
-        logger.warning(f"HH API orqali olishda xatolik: {e}, HTML sahifaga o'tilmoqda...")
+        logger.warning(f"HH API so'rovida ogohlantirish: {e}")
 
-    # 2-usul: HH.uz qidiruv HTML sahifasini parse qilish
+    # 2. Zaxira (Fallback): Cloudflare va bloklashlarni aylanib o'tish uchun curl_cffi orqali hh.uz
     try:
-        html_url = "https://hh.uz/search/vacancy?area=97&text=Python&order_by=publication_time"
-        async with httpx.AsyncClient(timeout=15, headers=HEADERS, follow_redirects=True) as client:
-            resp = await client.get(html_url)
-            if resp.status_code == 200:
-                soup = bs4.BeautifulSoup(resp.text, "html.parser")
-                cards = soup.find_all("div", attrs={"data-qa": "vacancy-serp__vacancy"})
-                if not cards:
-                    cards = soup.find_all("div", class_=lambda x: x and "vacancy-card" in x)
+        encoded_query = urllib.parse.quote("Python OR Django OR FastAPI OR AI OR Backend OR Telegram bot OR Парсер")
+        html_url = f"https://hh.uz/search/vacancy?area=97&text={encoded_query}&search_period=1&order_by=publication_time"
+        resp = cffi_requests.get(html_url, impersonate="chrome", timeout=15)
+        if resp.status_code == 200:
+            soup = bs4.BeautifulSoup(resp.text, "html.parser")
+            cards = soup.find_all("div", attrs={"data-qa": "vacancy-serp__vacancy"})
+            if not cards:
+                cards = soup.find_all("div", class_=lambda x: x and "vacancy-card" in x)
                 
-                for card in cards[:15]:
-                    title_elem = card.find("a", attrs={"data-qa": "serp-item__title"})
-                    if not title_elem:
-                        continue
-                    title = title_elem.get_text(strip=True)
-                    url = title_elem.get("href", "")
-                    if "?" in url:
-                        url = url.split("?")[0]
+            for card in cards[:20]:
+                title_elem = card.find("a", attrs={"data-qa": "serp-item__title"})
+                if not title_elem:
+                    continue
+                title = title_elem.get_text(strip=True)
+                item_url = title_elem.get("href", "")
+                if "?" in item_url:
+                    item_url = item_url.split("?")[0]
                     
-                    comp_elem = card.find("a", attrs={"data-qa": "vacancy-serp__vacancy-employer"})
-                    company = comp_elem.get_text(strip=True) if comp_elem else "Kompaniya ko'rsatilmagan"
-                    
-                    desc_elem = card.find("div", attrs={"data-qa": "vacancy-serp__vacancy_snippet_requirement"})
-                    desc = desc_elem.get_text(strip=True) if desc_elem else ""
-
-                    # HH.uz HTML da sana tegi: <span data-qa="vacancy-serp__vacancy-date">
-                    date_elem = card.find("span", attrs={"data-qa": "vacancy-serp__vacancy-date"})
-                    posted_at_raw = date_elem.get_text(strip=True) if date_elem else ""
-                    
-                    vac_id = make_hash_id("hh_uz", url)
-                    vacancies.append({
-                        "id": vac_id,
-                        "title": title,
-                        "company": company,
-                        "url": url,
-                        "text": clean_text(f"{title} | {company} | {desc}"),
-                        "source": "hh.uz",
-                        "posted_at": posted_at_raw  # ✅ HTML scraping dan ham vaqt olinadi
-                    })
+                m = re.search(r"/vacancy/(\d+)", item_url)
+                v_id = m.group(1) if m else item_url
+                if v_id in seen_ids:
+                    continue
+                seen_ids.add(v_id)
+                
+                comp_elem = card.find("a", attrs={"data-qa": "vacancy-serp__vacancy-employer"})
+                company = comp_elem.get_text(strip=True) if comp_elem else "Kompaniya ko'rsatilmagan"
+                
+                desc_elem = card.find("div", attrs={"data-qa": "vacancy-serp__vacancy_snippet_requirement"})
+                desc = desc_elem.get_text(strip=True) if desc_elem else ""
+                
+                date_elem = card.find("span", attrs={"data-qa": "vacancy-serp__vacancy-date"})
+                posted_at_raw = date_elem.get_text(strip=True) if date_elem else ""
+                
+                vacancies.append({
+                    "id": make_hash_id("hh_uz", v_id),
+                    "title": title,
+                    "company": company,
+                    "url": item_url,
+                    "text": clean_text(f"{title} | {company} | {desc}"),
+                    "source": "hh.uz",
+                    "job_type": "vacancy",
+                    "posted_at": posted_at_raw
+                })
+                
+            logger.info(f"HH.uz HTML zaxirasi orqali {len(vacancies)} ta vakansiya olindi.")
     except Exception as e:
-        logger.error(f"HH HTML scraping xatoligi: {e}")
+        logger.error(f"HH zaxira scraping xatoligi: {e}")
         
     return vacancies
 
+async def scrape_hh_uz() -> List[Dict]:
+    """FastAPI orqa fonda bloklanmasligi uchun alohida oqimda ishga tushirish"""
+    return await asyncio.to_thread(_fetch_hh_uz_sync)
+
+def _fetch_olx_uz_sync() -> List[Dict]:
+    """OLX.uz API dan Cloudflare himoyasini aylanib o'tib (curl_cffi) oxirgi 24 soatlik buyurtmalarni yig'ish"""
+    queries = [
+        "python", "dasturchi", "программист", 
+        "telegram bot", "телеграм бот", 
+        "sayt yaratish", "сайт под ключ", 
+        "ai", "backend"
+    ]
+    vacancies = []
+    seen_urls = set()
+
+    for q in queries:
+        encoded_q = urllib.parse.quote(q)
+        url = f"https://www.olx.uz/api/v1/offers/?offset=0&limit=20&query={encoded_q}"
+        try:
+            resp = cffi_requests.get(url, impersonate="chrome", timeout=12)
+            if resp.status_code == 200:
+                data = resp.json().get("data", [])
+                for item in data:
+                    item_url = item.get("url")
+                    if not item_url or item_url in seen_urls:
+                        continue
+                    seen_urls.add(item_url)
+
+                    time_val = item.get("last_refresh_time") or item.get("created_time")
+                    if not is_within_last_24_hours(time_val):
+                        continue
+
+                    title = item.get("title", "")
+                    desc = item.get("description", "")
+                    # HTML teglarni tozalash
+                    soup = bs4.BeautifulSoup(desc, "html.parser")
+                    clean_desc = soup.get_text(separator=" ", strip=True)
+                    full_text = f"{title}\n{clean_desc}"
+
+                    # Dasturchi reklamalarini (Bot yasab beramiz, sotiladi) rad etish
+                    if is_seller_advertisement(full_text):
+                        continue
+                        
+                    if not is_potentially_relevant(full_text):
+                        continue
+
+                    # E'lon turini aniqlash (vakansiya yoki frilans buyurtma)
+                    is_freelance = any(w in full_text.lower() for w in ["bot", "sayt", "loyiha", "buyurtma", "yasatish", "proyekt", "qildirmoqchi", "freelance"])
+                    job_type = "freelance" if is_freelance else "vacancy"
+
+                    vac_id = make_hash_id("olx_uz", item_url)
+                    vacancies.append({
+                        "id": vac_id,
+                        "title": title,
+                        "company": "OLX.UZ Buyurtmachi",
+                        "url": item_url,
+                        "text": clean_text(full_text)[:2200],
+                        "source": "olx.uz",
+                        "job_type": job_type,
+                        "posted_at": time_val or ""
+                    })
+        except Exception as e:
+            logger.warning(f"OLX qidiruvida ogohlantirish ({q}): {e}")
+
+    logger.info(f"OLX.uz dan {len(vacancies)} ta yangi 24 soatlik buyurtma/vakansiya topildi.")
+    return vacancies
+
+async def scrape_olx_uz() -> List[Dict]:
+    """OLX qidiruvini alohida fonda ishlatish"""
+    return await asyncio.to_thread(_fetch_olx_uz_sync)
+
 async def scrape_telegram_channel(channel: str, today_only: bool = True) -> List[Dict]:
-    """Ochiq Telegram kanalini t.me/s/{channel} orqali skanerlash. today_only=False bo'lsa oxirgi e'lonlarni ham oladi"""
+    """Ochiq Telegram kanalini t.me/s/{channel} orqali skanerlash"""
     vacancies = []
     clean_channel = channel.strip().lstrip("@").replace("https://t.me/s/", "").replace("https://t.me/", "").replace("t.me/s/", "").replace("t.me/", "").strip("/")
     url = f"https://t.me/s/{clean_channel}"
     
     try:
-        async with httpx.AsyncClient(timeout=12, headers=HEADERS, follow_redirects=True) as client:
+        async with httpx.AsyncClient(timeout=14, headers=HEADERS, follow_redirects=True) as client:
             resp = await client.get(url)
             if resp.status_code != 200:
                 logger.warning(f"Kanalni yuklab bo'lmadi: {clean_channel} (Status: {resp.status_code})")
@@ -195,13 +319,12 @@ async def scrape_telegram_channel(channel: str, today_only: bool = True) -> List
             
             # Oxirgi 25 ta xabarni tekshiramiz
             for msg in messages[-25:]:
-                # 1. Sana tekshiruvi (agar today_only yoqilgan bo'lsa)
                 time_elem = msg.find("time")
                 dt_str = ""
                 if time_elem and time_elem.get("datetime"):
                     dt_str = time_elem.get("datetime")
-                    if today_only and not is_published_today(dt_str):
-                        # Bugungi kunga tegishli emas, o'tkazib yuboramiz
+                    # Oxirgi 24 soatlik xabarlarni tekshirish
+                    if today_only and not is_within_last_24_hours(dt_str):
                         continue
                         
                 text_elem = msg.find("div", class_="tgme_widget_message_text")
@@ -209,6 +332,11 @@ async def scrape_telegram_channel(channel: str, today_only: bool = True) -> List
                     continue
                     
                 raw_text = text_elem.get_text(separator="\n", strip=True)
+                
+                # Sotuvchi reklamalarini olib tashlash
+                if is_seller_advertisement(raw_text):
+                    continue
+                    
                 if not is_potentially_relevant(raw_text):
                     continue
                     
@@ -218,7 +346,11 @@ async def scrape_telegram_channel(channel: str, today_only: bool = True) -> List
                 
                 # Sarlavhani birinchi qatordan olish
                 lines = [line.strip() for line in raw_text.split("\n") if line.strip()]
-                title = lines[0][:80] if lines else "Telegram vakansiya"
+                title = lines[0][:80] if lines else "Telegram e'lon"
+                
+                # Frilans buyurtma yoki vakansiya ekanligini taxminiy ajratish
+                is_freelance = any(w in raw_text.lower() for w in ["#loyiha", "loyiha", "buyurtma", "zakaz", "bot yasatish", "sayt qilish", "freelance", "frilans"])
+                job_type = "freelance" if is_freelance else "vacancy"
                 
                 vac_id = make_hash_id(clean_channel, post_url)
                 
@@ -229,7 +361,8 @@ async def scrape_telegram_channel(channel: str, today_only: bool = True) -> List
                     "url": post_url,
                     "text": raw_text,
                     "source": f"@{clean_channel}",
-                    "posted_at": dt_str  # ✅ Telegram post vaqti (ISO format, UTC)
+                    "job_type": job_type,
+                    "posted_at": dt_str
                 })
     except Exception as e:
         logger.error(f"Telegram {clean_channel} kanalini o'qishda xatolik: {e}")
@@ -237,17 +370,37 @@ async def scrape_telegram_channel(channel: str, today_only: bool = True) -> List
     return vacancies
 
 async def scrape_all_sources() -> List[Dict]:
-    """Barcha belgilangan manbalardan faqat bugungi yangi vakansiyalarni to'plash"""
-    all_vacancies = []
+    """
+    Barcha manbalarni (9 ta Telegram kanal + hh.uz + olx.uz)
+    asyncio.gather orqali PARALLEL va juda tez skaner qilish.
+    """
+    tasks = []
     
-    # 1. HH.uz
-    hh_vacancies = await scrape_hh_uz()
-    all_vacancies.extend(hh_vacancies)
+    # 1. HH.UZ
+    tasks.append(scrape_hh_uz())
     
-    # 2. Telegram kanallar
+    # 2. OLX.UZ
+    tasks.append(scrape_olx_uz())
+    
+    # 3. 9 ta Telegram kanal
     for ch in TELEGRAM_CHANNELS:
-        ch_vacancies = await scrape_telegram_channel(ch)
-        all_vacancies.extend(ch_vacancies)
+        tasks.append(scrape_telegram_channel(ch, today_only=True))
         
-    logger.info(f"Bugungi sanaga oid jami {len(all_vacancies)} ta xom vakansiya topildi.")
+    logger.info(f"🚀 Barcha {len(tasks)} ta manba bo'yicha parallel skanerlash boshlandi...")
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    
+    all_vacancies = []
+    seen_ids = set()
+    
+    for res in results:
+        if isinstance(res, list):
+            for item in res:
+                v_id = item.get("id")
+                if v_id and v_id not in seen_ids:
+                    seen_ids.add(v_id)
+                    all_vacancies.append(item)
+        elif isinstance(res, Exception):
+            logger.error(f"Manbani skanerlashda parallel vazifa xatoligi: {res}")
+            
+    logger.info(f"Oxirgi 24 soatga oid jami {len(all_vacancies)} ta noyob vakansiya va frilans buyurtma yig'ildi.")
     return all_vacancies

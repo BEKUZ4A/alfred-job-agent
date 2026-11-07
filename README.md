@@ -5,20 +5,22 @@ Assalomu alaykum! Ushbu loyiha siz uchun **kompyuteringiz o'chiq turganda ham** 
 ---
 
 ## 🎯 Alfred nima qila oladi?
-1. **O'zbekistondagi manbalarni 24/7 kuzatadi:**
-   - Telegram kanallar: `@joblinkuz`, `@rizqimuz`, `@ish_kerak_toshkent_bormi_ishlar`, `@jobforjunior`, `@freelance_uzb`, `@young_june`, `@young_intern`
-   - Saytlar: `hh.uz` (O'zbekiston bo'yicha)
-2. **Gemini AI orqali tahlil qiladi:**
+1. **O'zbekistondagi barcha nufuzli manbalarni 24/7 parallel kuzatadi:**
+   - 📱 **9 ta Telegram kanal:** `@joblinkuz`, `@rizqimuz`, `@ish_kerak_toshkent_bormi_ishlar`, `@jobforjunior`, `@freelance_uzb`, `@young_june`, `@young_intern`, `@UstozShogird`, `@it_jobs_uz`
+   - 🌐 **HH.UZ:** Rasmiy API orqali O'zbekiston bo'yicha so'nggi 24 soatlik yangi Python/AI/Backend vakansiyalari
+   - 📦 **OLX.UZ:** Ichki API orqali bir martalik frilans buyurtmalar va loyihalar (Cloudflare aylanib o'tish bilan)
+2. **Gemini AI orqali aqlli tahlil va filtr:**
+   - Ish beruvchilar va buyurtmachilarni dasturchilarning reklamasidan ("Bot yasab beramiz", "sotiladi") ajratadi.
+   - Har bir e'lonni `[🏢 VAKANSIYA]` yoki `[💰 FRILANS BUYURTMA]` deb toifalarga ajratadi.
    - Har bir ishni sizning profilingizga (Junior / Intern / Freelance / Python / AI) mosligini 0-100% oraliqda tekshiradi.
-   - Senior yoki Python'ga aloqasi yo'q ishlarni tashlab ketadi.
 3. **Sizga xabar beradi:**
-   - 📞 **Qo'ng'iroq qiladi (FLOOD va Retry himoyasi bilan):** CallMeBot orqali Telegramingizga qo'ng'iroq chaqiradi. Agar server band (FLOOD) bo'lsa, 10 soniya kutib qayta urinadi. Agar baribir o'tmasa, darhol Telegram orqali ogohlantirib, eng mos vakansiyaning ovozli va matnli xabarini yetkazadi. (Botda /call buyrug'i orqali ham test qilish mumkin).
+   - 📞 **Qo'ng'iroq qiladi (FLOOD va Retry himoyasi bilan):** CallMeBot orqali Telegramingizga qo'ng'iroq chaqiradi. Agar server band bo'lsa, 10 soniya kutib qayta urinadi.
    - 🎙 **Ovozli xabar yuboradi:** Eng yaxshi vakansiyaning qisqa mazmunini o'zbek tilida gapirib beradi (`uz-UZ-MadinaNeural`).
-   - 📩 **Chiroyli xabar:** Barcha mos ishlarni havolasi va maoshi bilan chiroyli formatda jo'natadi.
-4. **Ovozli xabarlarni tushunadi va Suhbatlashadi:**
-   - 🎙 **Ovozli xabarni o'qish (Audio-to-Text):** Botga Telegram orqali ovozli xabar yuborsangiz, Gemini AI uni diqqat bilan eshitib, matnga aylantiradi va topshirig'ingizni bajaradi.
-   - 🏢 **Guruh nomi bo'yicha qidirish:** Ovozli yoki yozma tarzda guruh nomini @ belgisisiz ham aytsangiz (masalan: *"JobLink dan qidir"*, *"Rizqim"*, *"Freelance"*, *"Job for Junior"*), darhol o'sha kanaldagi vakansiyalarni tahlil qilib, moslarini taqdim etadi.
-   - 💬 **Karyera maslahatchisi:** Botga savol yozsangiz yoki gapirsangiz, Gemini sun'iy intellekti yordamida o'zbek tilida maslahat beradi.
+   - 📩 **Chiroyli format:** `[🏢 VAKANSIYA]` / `[💰 FRILANS BUYURTMA]` va `[HH.UZ]`, `[OLX.UZ]`, `[TELEGRAM]` belgilari bilan to'liq ma'lumotlarni yuboradi.
+4. **Ovozli boshqaruv va Frilans Taklif generatori:**
+   - 🎙 **Ovozli xabarni eshitish:** Botga ovozli xabar yuborsangiz, Gemini AI orqali uni eshitib tushunadi va buyruqni bajaradi.
+   - 🏢 **Guruh nomi bo'yicha qidiruv:** Istalgan guruh nomini @ siz aytsangiz ham qidiradi (*"JobLink"*, *"Ustoz Shogird"*, *"Freelance"*).
+   - 📨 **"Rezyume / Taklif yuborish" tugmasi:** Frilans buyurtma kelganda, shu tugmani bosish bilan Gemini mijozga yuborish uchun professional tijoriy taklif (Pitch/Cover Letter + GitHub: BEKUZ4A) yozib beradi!
 
 ---
 

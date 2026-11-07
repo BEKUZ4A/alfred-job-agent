@@ -4,10 +4,10 @@ import httpx
 import re
 from typing import Dict, Any, Optional, List
 from config import TELEGRAM_BOT_TOKEN, MIN_MATCH_SCORE
-from ai_analyzer import chat_with_alfred, get_last_error, batch_analyze_vacancies, transcribe_voice_with_gemini
+from ai_analyzer import chat_with_alfred, get_last_error, batch_analyze_vacancies, transcribe_voice_with_gemini, generate_freelance_pitch
 from notifier import send_telegram_message, send_telegram_voice, format_vacancy_card, make_call
 from scraper import scrape_telegram_channel
-from database import get_recent_vacancies, mark_vacancy_seen
+from database import get_recent_vacancies, mark_vacancy_seen, get_vacancy_by_id
 from voice import generate_voice_message
 
 logger = logging.getLogger("Alfred.BotHandler")
@@ -34,6 +34,12 @@ CHANNEL_ALIASES = {
     ],
     "young_intern": [
         "young intern", "young_intern", "youngintern", "intern", "stajyor", "amaliyot"
+    ],
+    "UstozShogird": [
+        "ustoz shogird", "ustozshogird", "ustoz_shogird", "ustoz-shogird", "ustoz", "ustoz shogird kanali"
+    ],
+    "it_jobs_uz": [
+        "it jobs", "it_jobs", "it_jobs_uz", "itjobs", "it jobs uz"
     ]
 }
 
@@ -44,7 +50,9 @@ CHANNEL_DISPLAY_NAMES = {
     "jobforjunior": "Job for Junior (@jobforjunior)",
     "freelance_uzb": "Freelance Uzbekistan (@freelance_uzb)",
     "young_june": "Young June (@young_june)",
-    "young_intern": "Young Intern (@young_intern)"
+    "young_intern": "Young Intern (@young_intern)",
+    "UstozShogird": "Ustoz-Shogird (@UstozShogird)",
+    "it_jobs_uz": "IT Jobs Uzbekistan (@it_jobs_uz)"
 }
 
 def resolve_channel_query(user_text: str) -> Optional[tuple[str, str]]:
@@ -202,12 +210,67 @@ async def search_channel_vacancies(channel: str, display_name: str, chat_id: str
     for i, vac in enumerate(matches[:5], start=1):
         try:
             card = format_vacancy_card(vac, rank=i)
-            await send_telegram_message(card, chat_id=chat_id)
+            vac_analysis = vac.get("analysis", {})
+            job_type = vac_analysis.get("job_type") or vac.get("job_type", "vacancy")
+            is_freelance = "freelance" in str(job_type).lower() or "frilans" in str(job_type).lower() or "buyurtma" in str(job_type).lower()
+            
+            reply_markup = None
+            if is_freelance:
+                reply_markup = {
+                    "inline_keyboard": [
+                        [
+                            {
+                                "text": "📨 Rezyume / Taklif yuborish",
+                                "callback_data": f"pitch:{vac['id']}"
+                            }
+                        ]
+                    ]
+                }
+            await send_telegram_message(card, chat_id=chat_id, reply_markup=reply_markup)
         except Exception as e:
             logger.error(f"Karta yuborishda xato: {e}")
 
 async def process_telegram_update(update: Dict[str, Any], trigger_scan_callback=None):
-    """Telegramdan kelgan yangilanishlarni (matn va ovozli xabarlarni) qayta ishlash"""
+    """Telegramdan kelgan yangilanishlarni (matn, ovozli xabarlar va tugma bosilishlarini) qayta ishlash"""
+    
+    # 0. Telegram Inline Tugma (Callback Query) bosilganda (masalan: "📨 Rezyume / Taklif yuborish")
+    callback_query = update.get("callback_query")
+    if callback_query:
+        callback_id = callback_query.get("id")
+        cb_data = callback_query.get("data", "")
+        cb_chat_id = str(callback_query.get("message", {}).get("chat", {}).get("id"))
+        
+        # Tugma loading aylanasini to'xtatish uchun Telegramga tasdiq yuborish
+        try:
+            ack_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/answerCallbackQuery"
+            async with httpx.AsyncClient(timeout=8) as client:
+                await client.post(ack_url, json={"callback_query_id": callback_id, "text": "Taklif tayyorlanmoqda..."})
+        except Exception as e:
+            logger.warning(f"answerCallbackQuery xatosi: {e}")
+            
+        if cb_data.startswith("pitch:"):
+            vac_id = cb_data.split(":", 1)[1]
+            vac = get_vacancy_by_id(vac_id)
+            title = vac.get("title", "Frilans buyurtma") if vac else "Frilans buyurtma"
+            summary = vac.get("ai_summary", "") if vac else ""
+            source = vac.get("source", "Internet") if vac else ""
+            url = vac.get("url", "#") if vac else "#"
+            
+            await send_telegram_message(
+                "⏳ <i>Gemini AI buyurtmachi uchun maxsus tijoriy taklif (Pitch) yozmoqda...</i>",
+                chat_id=cb_chat_id
+            )
+            pitch = await generate_freelance_pitch(title=title, summary=summary, source=source)
+            
+            pitch_msg = (
+                f"📨 <b>Buyurtmachi uchun tayyor tijoriy taklif (Pitch / Cover Letter):</b>\n\n"
+                f"<i>\"{pitch}\"</i>\n\n"
+                f"📋 <i>Ushbu matnni nusxalab, mijozga to'g'ridan-to'g'ri yuborishingiz mumkin!</i>\n"
+                f"👉 <a href='{url}'><b>Mijoz e'loniga o'tish</b></a>"
+            )
+            await send_telegram_message(pitch_msg, chat_id=cb_chat_id)
+            return
+
     message = update.get("message")
     if not message:
         return
@@ -219,12 +282,16 @@ async def process_telegram_update(update: Dict[str, Any], trigger_scan_callback=
     # 1. /start buyrug'i
     if text == "/start":
         welcome_text = (
-            "🤖 <b>Assalomu alaykum! Men Alfred — Sizning shaxsiy AI Vakansiya Agentingizman.</b>\n\n"
-            "Men 24/7 rejimda ishlayman va siz uchun O'zbekistondagi nufuzli manbalar hamda Telegram kanallardan Python, Django, FastAPI, AI yo'nalishlarida yangi ishlarni qidiraman.\n\n"
+            "🤖 <b>Assalomu alaykum! Men Alfred — Sizning shaxsiy AI Vakansiya va Frilans Agentingizman.</b>\n\n"
+            "Men 24/7 rejimda internetdan quyidagi manbalar bo'yicha ishlar va frilans buyurtmalarni qidiraman:\n"
+            "• 🌐 <b>HH.UZ</b> (Rasmiy API orqali eng so'nggi vakansiyalar)\n"
+            "• 📦 <b>OLX.UZ</b> (Yangi frilans buyurtmalar va ishlar)\n"
+            "• 📱 <b>9 ta Telegram kanal</b> (Ustoz-Shogird, JobLink, Rizqim, Freelance va b.)\n\n"
             "<b>Mavjud imkoniyatlar:</b>\n"
-            "🎙 <b>Ovozli xabar:</b> Menga ovozli xabar yuboring! Men uni diqqat bilan eshitib, tushunib javob beraman yoki topshirig'ingizni bajaraman.\n"
-            "🏢 <b>Guruh nomi bo'yicha qidirish:</b> Istalgan guruh nomini @ belgisisiz ham aytsangiz bo'ladi (masalan: <i>'JobLink dan qidir'</i>, <i>'Rizqim'</i>, <i>'Freelance'</i>, <i>'Job for Junior'</i>)\n"
-            "🔍 /scan yoki 'tekshir' — Barcha Telegram kanallar va HH.uz dan yangi ishlarni qidirish\n"
+            "🎙 <b>Ovozli xabar:</b> Menga ovozli xabar yuboring! Men uni diqqat bilan eshitib, tushunib javob beraman.\n"
+            "🏢 <b>Guruh nomi bo'yicha qidirish:</b> Istalgan guruh nomini @ belgisisiz ham aytsangiz bo'ladi (masalan: <i>'JobLink'</i>, <i>'Ustoz Shogird'</i>, <i>'Rizqim'</i>, <i>'Freelance'</i>)\n"
+            "📨 <b>Tijoriy taklif (Pitch):</b> Frilans buyurtma chiqsa, bir tugma bilan mijozga yuboriladigan taklif matnini tuzib beraman!\n"
+            "🔍 /scan yoki 'tekshir' — Barcha manbalarni (HH + OLX + 9 kanal) parallel tekshirish\n"
             "📞 /call — CallMeBot qo'ng'irog'ini test qilish (10s retry va FLOOD himoyasi bilan)\n"
             "📊 /status — Tizim va AI holati\n"
             "💬 Menga istalgan savolingizni yozishingiz yoki gapirishingiz mumkin!"

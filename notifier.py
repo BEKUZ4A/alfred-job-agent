@@ -119,8 +119,8 @@ async def make_call(text: str = "Sizga mos yangi vakansiya chiqdi", force: bool 
 # Orqaga moslik (backward compatibility) uchun
 send_callmebot_call = make_call
 
-async def send_telegram_message(text: str, chat_id: str = "") -> bool:
-    """Telegram bot orqali matnli xabar yuborish"""
+async def send_telegram_message(text: str, chat_id: str = "", reply_markup: Optional[Dict[str, Any]] = None) -> bool:
+    """Telegram bot orqali matnli xabar va ixtiyoriy inline tugmalar (reply_markup) yuborish"""
     target_chat_id = chat_id or TELEGRAM_CHAT_ID
     if not TELEGRAM_BOT_TOKEN or not target_chat_id:
         logger.warning("Telegram Bot Token yoki Chat ID sozlanmagan!")
@@ -133,6 +133,8 @@ async def send_telegram_message(text: str, chat_id: str = "") -> bool:
         "parse_mode": "HTML",
         "disable_web_page_preview": False
     }
+    if reply_markup:
+        payload["reply_markup"] = reply_markup
     
     try:
         async with httpx.AsyncClient(timeout=15) as client:
@@ -181,22 +183,38 @@ async def send_telegram_voice(file_path: str, caption: str = "", chat_id: str = 
 
 def format_vacancy_card(item: Dict[str, Any], rank: int = 0) -> str:
     """
-    Vakansiya ma'lumotlarini chiroyli HTML formatga keltirish.
-    E'lon qilingan vaqt (posted_at) va tartib raqami (rank) ham ko'rsatiladi.
+    Vakansiya yoki Frilans buyurtma ma'lumotlarini chiroyli HTML formatga keltirish.
+    [🏢 VAKANSIYA] yoki [💰 FRILANS BUYURTMA] va [HH.UZ], [OLX.UZ], [TELEGRAM] belgilari bilan.
     """
     analysis = item.get("analysis", {})
     score = analysis.get("match_score", 0)
     title = analysis.get("role_title") or item.get("title")
     company = analysis.get("company") or item.get("company")
-    level = analysis.get("experience_level", "Junior")
-    salary = analysis.get("salary", "Ko'rsatilmagan")
+    level = analysis.get("experience_level", "Junior / Frilans")
+    salary = analysis.get("salary", "Kelishilgan narxda / Ko'rsatilmagan")
     summary = analysis.get("short_summary", "")
     reason = analysis.get("reason", "")
     url = item.get("url", "#")
     source = item.get("source", "Internet")
     tech_stack = ", ".join(analysis.get("tech_stack", [])) or "Python"
 
-    # ✅ E'lon qilingan vaqtni formatlash
+    # E'lon turi: [🏢 VAKANSIYA] yoki [💰 FRILANS BUYURTMA]
+    job_type = analysis.get("job_type") or item.get("job_type", "vacancy")
+    if "freelance" in str(job_type).lower() or "frilans" in str(job_type).lower() or "buyurtma" in str(job_type).lower():
+        type_badge = "💰 <b>[FRILANS BUYURTMA]</b>"
+    else:
+        type_badge = "🏢 <b>[VAKANSIYA]</b>"
+
+    # Manba nishoni: [HH.UZ], [OLX.UZ], [TELEGRAM]
+    src_lower = str(source).lower()
+    if "hh" in src_lower:
+        source_badge = "<b>[HH.UZ]</b>"
+    elif "olx" in src_lower:
+        source_badge = "<b>[OLX.UZ]</b>"
+    else:
+        source_badge = f"<b>[TELEGRAM {source}]</b>" if source.startswith("@") else "<b>[TELEGRAM]</b>"
+
+    # E'lon qilingan vaqtni formatlash
     posted_at_raw = item.get("posted_at", "")
     posted_at_formatted = format_posted_at(posted_at_raw)
 
@@ -210,17 +228,16 @@ def format_vacancy_card(item: Dict[str, Any], rank: int = 0) -> str:
         rank_emoji = "🥉 "
 
     card = (
-        f"{rank_emoji}🎯 <b>Yangi mos vakansiya!</b> (Moslik: <b>{score}%</b>)\n\n"
-        f"📌 <b>Lavozim:</b> {title}\n"
-        f"🏢 <b>Kompaniya:</b> {company}\n"
-        f"📊 <b>Daraja:</b> {level}\n"
-        f"💰 <b>Maosh:</b> {salary}\n"
+        f"{rank_emoji}{type_badge} {source_badge} (Moslik: <b>{score}%</b>)\n\n"
+        f"📌 <b>Nomi:</b> {title}\n"
+        f"🏢 <b>Buyurtmachi/Kompaniya:</b> {company}\n"
+        f"📊 <b>Daraja / Turi:</b> {level}\n"
+        f"💰 <b>Byudjet / Maosh:</b> {salary}\n"
         f"🛠 <b>Texnologiyalar:</b> {tech_stack}\n"
-        f"📅 <b>E'lon qilingan:</b> {posted_at_formatted}\n"  # ✅ Yangi qator
-        f"🌐 <b>Manba:</b> {source}\n\n"
+        f"📅 <b>E'lon qilingan:</b> {posted_at_formatted}\n\n"
         f"💡 <b>Alfred tahlili:</b>\n<i>{summary}</i>\n\n"
         f"🔍 <b>Nega mos:</b> {reason}\n\n"
-        f"👉 <a href='{url}'><b>Vakansiyaga o'tish / Ariza topshirish</b></a>"
+        f"👉 <a href='{url}'><b>E'longa o'tish / Bog'lanish</b></a>"
     )
     return card
 
@@ -232,7 +249,7 @@ async def notify_user_about_vacancies(matches: List[Dict[str, Any]]):
     3. CallMeBot orqali qo'ng'iroq qilinadi (make_call: 10s retry bilan).
        Agar qo'ng'iroq baribir o'tmasa, dastur to'xtab qolmasdan Telegram orqali ogohlantirish yuboriladi:
        "🚨 DIQQAT: Yangi vakansiya topildi, lekin qo'ng'iroq liniyasi bandligi sababli xabar yuborildi!"
-    4. Eng mos vakansiyaning ovozli va matnli xabari Telegram chatga yetkazib beriladi.
+    4. Frilans buyurtmalar uchun '📨 Rezyume / Taklif yuborish' inline tugmasi taqdim etiladi.
     """
     if not matches:
         return
@@ -249,13 +266,11 @@ async def notify_user_about_vacancies(matches: List[Dict[str, Any]]):
     top_title = top_analysis.get("role_title", "Python Dasturchi")
     top_score = top_analysis.get("match_score", 0)
     top_company = top_analysis.get("company", top_vacancy.get("company", ""))
-
-    # ✅ E'lon qilingan vaqtni ovozli xabarga ham qo'shamiz
     top_posted_at = format_posted_at(top_vacancy.get("posted_at", ""))
 
     voice_text = top_analysis.get("voice_text") or (
-        f"Salom Behruz! Sizga yangi mos vakansiya topildi: {top_title}. "
-        f"Kompaniya: {top_company}. Moslik: {top_score} foiz. "
+        f"Salom Behruz! Sizga yangi mos e'lon topildi: {top_title}. "
+        f"Kompaniya/Mijoz: {top_company}. Moslik: {top_score} foiz. "
         f"E'lon qilingan: {top_posted_at}. Batafsil Telegram chatda."
     )
     
@@ -284,7 +299,7 @@ async def notify_user_about_vacancies(matches: List[Dict[str, Any]]):
         voice_file = await generate_voice_message(voice_text)
         if voice_file:
             caption = (
-                f"🎙 <b>Top-1 Eng Mos Vakansiya Ovozli Xabari:</b>\n"
+                f"🎙 <b>Top-1 Eng Mos Vakansiya / Buyurtma Ovozli Xabari:</b>\n"
                 f"<b>{top_title}</b> ({top_score}% moslik)\n"
                 f"📅 E'lon qilingan: {top_posted_at}"
             )
@@ -296,6 +311,25 @@ async def notify_user_about_vacancies(matches: List[Dict[str, Any]]):
     for i, vac in enumerate(top_matches, start=1):
         try:
             text_message = format_vacancy_card(vac, rank=i)
-            await send_telegram_message(text_message)
+            
+            # Agar Frilans buyurtma bo'lsa, '📨 Rezyume / Taklif yuborish' tugmasini qo'shamiz
+            vac_analysis = vac.get("analysis", {})
+            job_type = vac_analysis.get("job_type") or vac.get("job_type", "vacancy")
+            is_freelance = "freelance" in str(job_type).lower() or "frilans" in str(job_type).lower() or "buyurtma" in str(job_type).lower()
+            
+            reply_markup = None
+            if is_freelance:
+                reply_markup = {
+                    "inline_keyboard": [
+                        [
+                            {
+                                "text": "📨 Rezyume / Taklif yuborish",
+                                "callback_data": f"pitch:{vac['id']}"
+                            }
+                        ]
+                    ]
+                }
+                
+            await send_telegram_message(text_message, reply_markup=reply_markup)
         except Exception as e:
             logger.error(f"Telegram matn yuborishda xatolik: {e}")

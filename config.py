@@ -33,7 +33,7 @@ PORT = int(os.getenv("PORT", "8000"))
 # O'zbek ovozi
 EDGE_TTS_VOICE = os.getenv("EDGE_TTS_VOICE", "uz-UZ-MadinaNeural")
 
-# Kuzatiladigan Telegram kanallar ro'yxati
+# Kuzatiladigan 9 ta ommabop Telegram kanallar ro'yxati
 TELEGRAM_CHANNELS = [
     "joblinkuz",
     "rizqimuz",
@@ -41,7 +41,9 @@ TELEGRAM_CHANNELS = [
     "jobforjunior",
     "freelance_uzb",
     "young_june",
-    "young_intern"
+    "young_intern",
+    "UstozShogird",
+    "it_jobs_uz"
 ]
 
 # Nomzodning profili (AI tahlili uchun)

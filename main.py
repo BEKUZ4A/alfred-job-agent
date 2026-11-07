@@ -81,6 +81,8 @@ async def run_vacancy_scan() -> int:
             logger.info(f"Baho: {score}% | Mosmi: {is_relevant} | {item['title'][:40]}")
             
             # Bazaga ko'rilgan deb yozib qo'yamiz
+            job_type = analysis.get("job_type") or item.get("job_type", "vacancy")
+            item["job_type"] = job_type
             mark_vacancy_seen(
                 vacancy_id=vac_id,
                 title=item["title"],
@@ -88,7 +90,9 @@ async def run_vacancy_scan() -> int:
                 url=item["url"],
                 source=item["source"],
                 match_score=score,
-                ai_summary=analysis.get("short_summary", "")
+                ai_summary=analysis.get("short_summary", ""),
+                job_type=job_type,
+                raw_text=item.get("text", "")
             )
             
             # Agar talab qilingan minimal balldan yuqori bo'lsa
