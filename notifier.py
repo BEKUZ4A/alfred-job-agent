@@ -2,6 +2,7 @@ import httpx
 import urllib.parse
 import os
 import logging
+import asyncio
 from datetime import datetime, timezone
 from typing import Dict, Any, List
 from config import (
@@ -48,14 +49,19 @@ def format_posted_at(posted_at: str) -> str:
         # ISO format bo'lmasa (masalan, HH.uz HTML "1 soat oldin"), aynan qaytaramiz
         return posted_at if posted_at else "Noma'lum"
 
-async def send_callmebot_call(text: str = "Sizga mos yangi vakansiya chiqdi"):
-    """CallMeBot API orqali Telegramdan qo'ng'iroq qilish (faqat 8:00 dan 20:00 oralig'ida)"""
-    if not is_call_allowed_now():
-        return
+async def make_call(text: str = "Sizga mos yangi vakansiya chiqdi", force: bool = False) -> bool:
+    """
+    CallMeBot API orqali Telegramdan qo'ng'iroq qilish (faqat 8:00 dan 20:00 oralig'ida).
+    1. Agar CallMeBot FLOOD yoki xato qaytarsa, 10 soniya kutib 1 marta qayta urinsin (retry).
+    2. Qo'ng'iroq muvaffaqiyatiga qarab True yoki False qaytaradi.
+    """
+    if not force and not is_call_allowed_now():
+        logger.info("Qo'ng'iroq vaqti emas (8:00 dan 20:00 gacha ruxsat etilgan), qo'ng'iroq bekor qilindi.")
+        return False
 
     if not CALLMEBOT_USERNAME:
         logger.info("CallMeBot username kiritilmagan, qo'ng'iroq o'tkazib yuborildi.")
-        return
+        return False
         
     username = CALLMEBOT_USERNAME.strip()
     if not username.startswith("@"):
@@ -64,12 +70,54 @@ async def send_callmebot_call(text: str = "Sizga mos yangi vakansiya chiqdi"):
     encoded_text = urllib.parse.quote(text)
     url = f"http://api.callmebot.com/start.php?user={username}&text={encoded_text}&lang=ru-RU-Standard-B"
     
+    async def _execute_request() -> tuple[bool, str]:
+        try:
+            async with httpx.AsyncClient(timeout=15) as client:
+                resp = await client.get(url)
+                body = resp.text.strip()
+                lower_body = body.lower()
+
+                if resp.status_code != 200:
+                    return False, f"HTTP {resp.status_code}: {body[:150]}"
+
+                # CallMeBot FLOOD yoki server xatosi matnini tekshirish
+                if "flood" in lower_body or "too many users" in lower_body:
+                    return False, f"FLOOD xatosi ({body[:150]})"
+
+                if "error" in lower_body:
+                    return False, f"Server xatosi ({body[:150]})"
+
+                return True, body[:150]
+        except Exception as e:
+            return False, f"Tarmoq/ulanish xatosi: {e}"
+
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.get(url)
-            logger.info(f"CallMeBot qo'ng'iroq so'rovi yuborildi: {resp.status_code}")
+        # 1-urinish
+        logger.info(f"📞 CallMeBot orqali qo'ng'iroq qilinmoqda ({username})...")
+        success, msg = await _execute_request()
+        if success:
+            logger.info(f"✅ CallMeBot qo'ng'irog'i muvaffaqiyatli amalga oshirildi: {msg}")
+            return True
+
+        # 1. Agar CallMeBot FLOOD yoki xato qaytarsa, 10 soniya kutib 1 marta qayta urinsin (retry)
+        logger.warning(f"⚠️ CallMeBot xatolik berdi: {msg}. 10 soniya kutib qayta uriniladi (retry)...")
+        await asyncio.sleep(10)
+
+        # 2-urinish (retry)
+        logger.info("📞 CallMeBot qayta urinish (retry) amalga oshirilmoqda...")
+        success, msg = await _execute_request()
+        if success:
+            logger.info(f"✅ CallMeBot qayta urinishda muvaffaqiyatli amalga oshirildi: {msg}")
+            return True
+        else:
+            logger.error(f"❌ CallMeBot 2-urinishda ham muvaffaqiyatsiz bo'ldi: {msg}")
+            return False
     except Exception as e:
-        logger.error(f"CallMeBot qo'ng'iroq qilishda xatolik: {e}")
+        logger.error(f"make_call da kutilmagan xatolik: {e}")
+        return False
+
+# Orqaga moslik (backward compatibility) uchun
+send_callmebot_call = make_call
 
 async def send_telegram_message(text: str, chat_id: str = "") -> bool:
     """Telegram bot orqali matnli xabar yuborish"""
@@ -181,8 +229,10 @@ async def notify_user_about_vacancies(matches: List[Dict[str, Any]]):
     Topilgan mos vakansiyalar bo'yicha foydalanuvchini ogohlantirish:
     1. Maksimal 10 ta eng yaxshi vakansiya tanlab olinadi.
     2. Eng yuqori ball to'plagan 1 ta eng mos vakansiya ovozli xabarga aylantiriladi.
-    3. Agar vaqt 08:00 dan 20:00 oralig'ida bo'lsa, CallMeBot orqali qo'ng'iroq qilinadi.
-    4. Barcha 10 ta mos vakansiyalar Telegram chatga matn shaklida yuboriladi.
+    3. CallMeBot orqali qo'ng'iroq qilinadi (make_call: 10s retry bilan).
+       Agar qo'ng'iroq baribir o'tmasa, dastur to'xtab qolmasdan Telegram orqali ogohlantirish yuboriladi:
+       "🚨 DIQQAT: Yangi vakansiya topildi, lekin qo'ng'iroq liniyasi bandligi sababli xabar yuborildi!"
+    4. Eng mos vakansiyaning ovozli va matnli xabari Telegram chatga yetkazib beriladi.
     """
     if not matches:
         return
@@ -209,20 +259,43 @@ async def notify_user_about_vacancies(matches: List[Dict[str, Any]]):
         f"E'lon qilingan: {top_posted_at}. Batafsil Telegram chatda."
     )
     
-    # 1. Qo'ng'iroq qilish (faqat 8:00 - 20:00 oralig'ida)
-    await send_callmebot_call(text=f"Sizga mos yangi {top_title} vakansiyasi chiqdi! Moslik: {top_score}%")
+    # 1. Qo'ng'iroq qilish (make_call: faqat 8:00 - 20:00 oralig'ida)
+    call_success = False
+    call_attempted = is_call_allowed_now() and bool(CALLMEBOT_USERNAME)
+    if call_attempted:
+        try:
+            call_success = await make_call(text=f"Sizga mos yangi {top_title} vakansiyasi chiqdi! Moslik: {top_score}%")
+        except Exception as e:
+            logger.error(f"make_call chaqirishda xatolik: {e}")
+            call_success = False
+
+    # 2. Agar qo'ng'iroq baribir o'tmasa, dastur to'xtab qolmasin — darhol Telegram bot orqali ogohlantirish yuborish
+    if call_attempted and not call_success:
+        try:
+            logger.warning("Qo'ng'iroq o'tmadi (liniya band / FLOOD). Telegram orqali ogohlantirish yuborilmoqda...")
+            await send_telegram_message(
+                "🚨 <b>DIQQAT: Yangi vakansiya topildi, lekin qo'ng'iroq liniyasi bandligi sababli xabar yuborildi!</b>"
+            )
+        except Exception as e:
+            logger.error(f"Ogohlantirish matnini yuborishda xatolik: {e}")
     
-    # 2. Eng mos 1 ta vakansiya uchun o'zbekcha ovozli xabar
-    voice_file = await generate_voice_message(voice_text)
-    if voice_file:
-        caption = (
-            f"🎙 <b>Top-1 Eng Mos Vakansiya Ovozli Xabari:</b>\n"
-            f"<b>{top_title}</b> ({top_score}% moslik)\n"
-            f"📅 E'lon qilingan: {top_posted_at}"
-        )
-        await send_telegram_voice(voice_file, caption=caption)
+    # 3. Eng mos 1 ta vakansiya uchun o'zbekcha ovozli xabar
+    try:
+        voice_file = await generate_voice_message(voice_text)
+        if voice_file:
+            caption = (
+                f"🎙 <b>Top-1 Eng Mos Vakansiya Ovozli Xabari:</b>\n"
+                f"<b>{top_title}</b> ({top_score}% moslik)\n"
+                f"📅 E'lon qilingan: {top_posted_at}"
+            )
+            await send_telegram_voice(voice_file, caption=caption)
+    except Exception as e:
+        logger.error(f"Telegram ovozli xabar yuborishda xatolik: {e}")
         
-    # 3. Barcha qolgan (10 tagacha) mos vakansiyalarni matnli ko'rinishda yuborish
+    # 4. Barcha qolgan (10 tagacha) mos vakansiyalarni matnli ko'rinishda yuborish
     for i, vac in enumerate(top_matches, start=1):
-        text_message = format_vacancy_card(vac, rank=i)
-        await send_telegram_message(text_message)
+        try:
+            text_message = format_vacancy_card(vac, rank=i)
+            await send_telegram_message(text_message)
+        except Exception as e:
+            logger.error(f"Telegram matn yuborishda xatolik: {e}")

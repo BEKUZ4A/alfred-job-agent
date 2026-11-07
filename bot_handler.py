@@ -4,7 +4,7 @@ import httpx
 from typing import Dict, Any, Optional
 from config import TELEGRAM_BOT_TOKEN
 from ai_analyzer import chat_with_alfred, get_last_error
-from notifier import send_telegram_message
+from notifier import send_telegram_message, make_call
 from database import get_recent_vacancies
 
 logger = logging.getLogger("Alfred.BotHandler")
@@ -30,12 +30,13 @@ async def process_telegram_update(update: Dict[str, Any], trigger_scan_callback=
             "• Junior, Intern va Freelance o'rinlari\n\n"
             "<b>Mavjud buyruqlar:</b>\n"
             "🔍 /scan yoki 'tekshir' — Hoziroq yangi vakansiyalarni qidirish\n"
+            "📞 /call yoki /testcall — CallMeBot orqali qo'ng'iroqni test qilish\n"
             "📊 /status — Tizim va AI holati, oxirgi xatolik va topilgan ishlar\n"
             "💬 Menga istalgan savolingizni yozishingiz mumkin (rezyume, intervyu, texnologiyalar haqida), men sizga o'zbek tilida yordam beraman!"
         )
         await send_telegram_message(welcome_text, chat_id=chat_id)
         return
-        
+
     # 2. /scan yoki 'tekshir' buyrug'i
     if text in ["/scan", "tekshir", "Tekshir", "qidir", "Qidir"]:
         await send_telegram_message(
@@ -46,6 +47,27 @@ async def process_telegram_update(update: Dict[str, Any], trigger_scan_callback=
         if trigger_scan_callback:
             # Orqa fonda skanerni ishga tushirish
             asyncio.create_task(trigger_scan_callback())
+        return
+
+    # 3. /call yoki /testcall buyrug'i (CallMeBot qo'ng'irog'ini test qilish)
+    if text in ["/call", "/testcall", "call", "Call"]:
+        await send_telegram_message(
+            "📞 <b>CallMeBot orqali qo'ng'iroq testi boshlandi...</b>\n"
+            "Serverga so'rov yuborilmoqda. Agar server band bo'lsa (FLOOD), 10 soniyadan so'ng 1 marta qayta uriniladi (retry).",
+            chat_id=chat_id
+        )
+        call_success = await make_call("Salom Behruz! Bu Alfred AI Agentidan test qo'ng'irog'i.", force=True)
+        if call_success:
+            await send_telegram_message(
+                "✅ <b>Qo'ng'iroq muvaffaqiyatli amalga oshirildi!</b> Telegramingizga qo'ng'iroq borgan bo'lishi kerak.",
+                chat_id=chat_id
+            )
+        else:
+            await send_telegram_message(
+                "🚨 <b>DIQQAT: Yangi vakansiya topildi, lekin qo'ng'iroq liniyasi bandligi sababli xabar yuborildi!</b>\n\n"
+                "<i>(CallMeBot bepul serveri FLOOD xatosi berdi yoki liniya band. 10 soniya kutib qayta urinildi, ammo server javob bermadi)</i>",
+                chat_id=chat_id
+            )
         return
         
     # 3. /status buyrug'i (Oxirgi xatolik va AI holatini ko'rsatish)

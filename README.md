@@ -12,7 +12,7 @@ Assalomu alaykum! Ushbu loyiha siz uchun **kompyuteringiz o'chiq turganda ham** 
    - Har bir ishni sizning profilingizga (Junior / Intern / Freelance / Python / AI) mosligini 0-100% oraliqda tekshiradi.
    - Senior yoki Python'ga aloqasi yo'q ishlarni tashlab ketadi.
 3. **Sizga xabar beradi:**
-   - 📞 **Qo'ng'iroq qiladi:** CallMeBot orqali Telegramingizga qo'ng'iroq chaqiradi.
+   - 📞 **Qo'ng'iroq qiladi (FLOOD va Retry himoyasi bilan):** CallMeBot orqali Telegramingizga qo'ng'iroq chaqiradi. Agar server band (FLOOD) bo'lsa, 10 soniya kutib qayta urinadi. Agar baribir o'tmasa, darhol Telegram orqali ogohlantirib, eng mos vakansiyaning ovozli va matnli xabarini yetkazadi. (Botda /call buyrug'i orqali ham test qilish mumkin).
    - 🎙 **Ovozli xabar yuboradi:** Eng yaxshi vakansiyaning qisqa mazmunini o'zbek tilida gapirib beradi (`uz-UZ-MadinaNeural`).
    - 📩 **Chiroyli xabar:** Barcha mos ishlarni havolasi va maoshi bilan chiroyli formatda jo'natadi.
 4. **Suhbatlashadi:**
