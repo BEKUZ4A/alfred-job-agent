@@ -25,6 +25,7 @@ def init_db():
         ai_summary TEXT,
         job_type TEXT DEFAULT 'vacancy',
         raw_text TEXT DEFAULT '',
+        salary TEXT DEFAULT '',
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     """)
@@ -35,6 +36,10 @@ def init_db():
         pass
     try:
         cursor.execute("ALTER TABLE seen_vacancies ADD COLUMN raw_text TEXT DEFAULT ''")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        cursor.execute("ALTER TABLE seen_vacancies ADD COLUMN salary TEXT DEFAULT ''")
     except sqlite3.OperationalError:
         pass
 
@@ -59,15 +64,16 @@ def mark_vacancy_seen(
     match_score: int, 
     ai_summary: str,
     job_type: str = "vacancy",
-    raw_text: str = ""
+    raw_text: str = "",
+    salary: str = ""
 ):
     """Vakansiya yoki frilans buyurtmani ko'rilgan deb belgilash"""
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("""
-    INSERT OR REPLACE INTO seen_vacancies (id, title, company, url, source, match_score, ai_summary, job_type, raw_text, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (vacancy_id, title, company, url, source, match_score, ai_summary, job_type, raw_text, datetime.utcnow().isoformat()))
+    INSERT OR REPLACE INTO seen_vacancies (id, title, company, url, source, match_score, ai_summary, job_type, raw_text, salary, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (vacancy_id, title, company, url, source, match_score, ai_summary, job_type, raw_text, salary, datetime.utcnow().isoformat()))
     conn.commit()
     conn.close()
 
@@ -86,6 +92,27 @@ def get_recent_vacancies(limit: int = 10) -> List[Dict]:
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM seen_vacancies ORDER BY created_at DESC LIMIT ?", (limit,))
     rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+def get_top_vacancies(limit: int = 5, min_score: int = 50) -> List[Dict]:
+    """
+    Eng yuqori moslik bali to'plagan eng yaxshi vakansiyalarni olish.
+    Chatda Alfred real vakansiyalarni tavsiya qilishi uchun ishlatiladi.
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+    SELECT * FROM seen_vacancies 
+    WHERE match_score >= ? 
+    ORDER BY match_score DESC, created_at DESC 
+    LIMIT ?
+    """, (min_score, limit))
+    rows = cursor.fetchall()
+    if not rows:
+        # Agar min_score dan yuqori topilmasa, mavjud eng yangilarini olish
+        cursor.execute("SELECT * FROM seen_vacancies ORDER BY match_score DESC, created_at DESC LIMIT ?", (limit,))
+        rows = cursor.fetchall()
     conn.close()
     return [dict(row) for row in rows]
 

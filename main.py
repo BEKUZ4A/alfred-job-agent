@@ -92,7 +92,8 @@ async def run_vacancy_scan() -> int:
                 match_score=score,
                 ai_summary=analysis.get("short_summary", ""),
                 job_type=job_type,
-                raw_text=item.get("text", "")
+                raw_text=item.get("text", ""),
+                salary=analysis.get("salary", "")
             )
             
             # Agar talab qilingan minimal balldan yuqori bo'lsa
