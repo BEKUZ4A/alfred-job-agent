@@ -30,7 +30,12 @@ MIN_MATCH_SCORE = int(os.getenv("MIN_MATCH_SCORE", "65"))
 # Server porti (Render.com avtomatik PORT o'zgaruvchisini beradi)
 PORT = int(os.getenv("PORT", "8000"))
 
-# Gemini Native Audio TTS sozlamalari (Asosiy tabiiy ovoz)
+# ElevenLabs Ovoz sozlamalari (Asosiy premium ovoz)
+ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "sk_d770ede4c9647d52c5c4282b536d6e62b86ef156e3a54a93")
+ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "cfWx14ZbaEUT4BjIA5tH")
+ELEVENLABS_MODEL_ID = os.getenv("ELEVENLABS_MODEL_ID", "eleven_multilingual_v2")
+
+# Gemini Native Audio TTS sozlamalari (Zaxira tabiiy ovoz)
 GEMINI_TTS_MODEL = os.getenv("GEMINI_TTS_MODEL", "gemini-2.5-flash-preview-tts")
 GEMINI_TTS_VOICE = os.getenv("GEMINI_TTS_VOICE", "Aoede")  # "Aoede" (yoqimli, tabiiy) yoki "Charon" (jiddiy erkak ovozi)
 
