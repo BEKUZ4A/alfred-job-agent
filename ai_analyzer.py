@@ -84,9 +84,14 @@ JAVOBNI FAQAT QUYIDAGI JSON MASSIV (ARRAY) FORMATIDA QAYTAR (boshqa hech qanday 
 ]
 """
 
-async def call_gemini_api(prompt: str, system_instruction: str = "") -> Optional[str]:
+async def call_gemini_api(
+    prompt: str, 
+    system_instruction: str = "", 
+    history: Optional[List[Dict[str, str]]] = None
+) -> Optional[str]:
     """
     Gemini API ga bir nechta model bo'yicha zaxira (fallback) bilan so'rov yuborish.
+    Suhbat tarixi (history) qo'llab-quvvatlanadi (user/model tartibida navbatma-navbat ulanadi).
     Xatolik yuz berganda uning aniq texnik sababi (404, 429, API Key) qayd etiladi.
     """
     if not GEMINI_API_KEY:
@@ -97,16 +102,33 @@ async def call_gemini_api(prompt: str, system_instruction: str = "") -> Optional
 
     attempts_log = []
 
+    # Gemini API uchun tartibli user/model zanjirini qurish
+    merged_turns = []
+    if system_instruction:
+        merged_turns.append({"role": "user", "text": f"SYSTEM INSTRUCTION: {system_instruction}"})
+        merged_turns.append({"role": "model", "text": "Tushundim. Barcha ko'rsatma va qoidalarga qat'iy amal qilaman."})
+
+    if history:
+        for item in history:
+            h_role = "user" if item.get("role") == "user" else "model"
+            h_text = (item.get("text") or "").strip()
+            if not h_text:
+                continue
+            # Ketma-ket bir xil rolni birlashtirib borish (Gemini 400 xatosini oldini olish uchun)
+            if merged_turns and merged_turns[-1]["role"] == h_role:
+                merged_turns[-1]["text"] += "\n" + h_text
+            else:
+                merged_turns.append({"role": h_role, "text": h_text})
+
+    if merged_turns and merged_turns[-1]["role"] == "user":
+        merged_turns[-1]["text"] += "\n" + prompt
+    else:
+        merged_turns.append({"role": "user", "text": prompt})
+
+    contents = [{"role": t["role"], "parts": [{"text": t["text"]}]} for t in merged_turns]
+
     for model_name in AVAILABLE_MODELS:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={GEMINI_API_KEY}"
-        
-        contents = []
-        if system_instruction:
-            contents.append({"role": "user", "parts": [{"text": f"SYSTEM INSTRUCTION: {system_instruction}"}]})
-            contents.append({"role": "model", "parts": [{"text": "Tushundim, barcha ko'rsatmalarga qat'iy amal qilaman."}]})
-            
-        contents.append({"role": "user", "parts": [{"text": prompt}]})
-        
         payload = {
             "contents": contents,
             "generationConfig": {
@@ -200,33 +222,60 @@ async def batch_analyze_vacancies(vacancies: List[Dict[str, Any]]) -> List[Dict[
         set_last_error(f"⚠️ JSON Parse xatoligi: {str(e)[:80]}")
         return []
 
-async def chat_with_alfred(user_message: str, vacancies_context: str = "", wants_voice: bool = False) -> str:
+async def chat_with_alfred(
+    user_message: str, 
+    vacancies_context: str = "", 
+    wants_voice: bool = False,
+    history: Optional[List[Dict[str, str]]] = None
+) -> str:
     """
-    Foydalanuvchi botga yozganda yoki gapirganda Alfred sifatida o'zbek tilida javob berish.
-    Ovozli xabar so'ralganda yoki vakansiyalar haqida savol berilganda real ma'lumotlar bilan boyitiladi.
+    Foydalanuvchi botga yozganda yoki gapirganda Alfred sifatida professional o'zbek tilida javob berish.
+    Suhbat tarixi (history) va bazadagi real vakansiyalar (vacancies_context) asosida ishlaydi.
+    Yolg'on vakansiya to'qish qat'iyan taqiqlangan!
     """
     system_prompt = f"""
-    Sen "Alfred" - foydalanuvchi Behruzbekning shaxsiy professional AI IT-rekruteri va eng yaqin do'stisan.
-    Foydalanuvchi Python, Django, FastAPI, AI Agentlar va Telegram botlar bo'yicha Junior/Intern/Freelance ish izlayotgan dasturchi.
-    U bilan o'zbek tilida, nihoyatda samimiy, do'stona, sodda va professional suhandon kabi ohangda gaplash.
+Sen "Alfred" - Behruzbek Bohodirovning shaxsiy professional IT-rekruteri va AI karyera maslahatchisisan.
+Nomzod haqida: Behruzbek Bohodirov, Python Backend va AI Developer (Python, Django, FastAPI, PostgreSQL, Docker, Redis, Celery, AI Agents).
+GitHub: https://github.com/BEKUZ4A
 
-    QAT'IY QOIDALAR (BU QOIDALARGA QAT'IY AMAL QIL):
-    1. HECH QACHON "men ovozli xabar yubora olmayman" yoki "men sun'iy intellektman, audio jo'nata olmayman" deb aytma! Sening javobing avtomatik tarzda TTS (ovozlashtirish) orqali Telegramda haqiqiy ovozli xabar (galasovoy) qilib yuboriladi.
-    2. Shuning uchun javobni xuddi jonli suhbatda yoki telefonda gapirayotgandek, yulduzchalarsiz (**), chiziqchalarsiz (-), ssilkalarsiz (https/link), emoji nomlarisiz, sof va chiroyli o'zbek tilida yoz!
-    3. Agar foydalanuvchi qanday ishlar borligi yoki eng mos vakansiya haqida so'rasa, HECH QACHON umumiy quruq maslahat berma! Quyida berilgan REAL VAKANSIYALAR ma'lumotlaridan foydalanib, eng mos ishni (kompaniya nomi, lavozim, taklif qilingan maosh, talablar) aniq va qiziqarli qilib tushuntirib ber!
-    4. Nutqing 3-5 ta silliq gapdan iborat bo'lsin, eshitish uchun yoqimli va jonli yangilik yetkazayotgandek jaranglasin.
-    """
+MULOQOT VA FORMATLASH QOIDALARI:
+1. Til: Aniq, tartibli, professional va samimiy o'zbek tili.
+2. QAT'IY TAQIQ: "Behruzbekim", "jonim", "og'ayni", "qalaydigan" kabi bachkana, erkalovchi yoki buzilgan so'zlarni UMUMAN ISHLATMA! Nomzodga faqat "Behruzbek" yoki "Siz" deb murojaat qil.
+3. HAR SAFAR QAYTA SALOMLASHMA: Agar suhbat allaqachon ketayotgan bo'lsa (tarixda avvalgi xabarlar mavjud bo'lsa), qaytadan "Assalomu alaykum", "Salom" deb boshlama! To'g'ridan-to'g'ri foydalanuvchi savoliga lo'nda va professional javob ber.
+4. Raqamlarni oddiy yoz: 400$, 800$, 1 yil, 2026 kabi. Raqamlarni so'z bilan yozishga urinma.
+5. Markdown formatlashdan (qalin matn **nomi**, ro'yxatlar, ssilka havolalari) chiroyli va qulay foydalan.
+
+YOLG'ON VAKANSIYA TO'QISHNI QAT'IY TAQIQLASH (ANTI-HALLUCINATION):
+- HECH QACHON o'zingdan vakansiya, kompaniya, maosh yoki buyurtma to'qib chiqarma!
+- Faqat va faqat quyidagi BAZADAGI REAL VAKANSIYALAR bo'limida berilgan haqiqiy ma'lumotlar haqida gapir.
+- Agar foydalanuvchi vakansiyalar haqida so'rasa, lekin berilgan kontekstda vakansiyalar bo'lmasa yoki bo'sh bo'lsa:
+  Ochiqchasiga: "Hozircha bazada yangi mos vakansiya topilmadi, /scan bosib yangi e'lonlarni qidirib ko'ring." deb ayt!
+- Agar real vakansiya haqida gapirayotgan bo'lsang, xabar ichida ALBATTA:
+  1. Kompaniya yoki Kanal nomi
+  2. Lavozim va asosiy talablar
+  3. Maosh / Byudjet
+  4. Haqiqiy manba havolasi (URL: https://...)
+  aniq ko'rsatilsin!
+
+SUHBAT TARIXI VA KONTEKSTNI TUSHUNISH:
+- Foydalanuvchining oldingi xabarlarini va o'zingning oldingi javoblaringni diqqat bilan inobatga ol.
+- Agar foydalanuvchi "qaysi", "ssilkasini ber", "batafsil ayt", "shunga rezyume yoz" deb qisqa yozsa:
+  Darhol oldingi xabarda qaysi vakansiya haqida gap borganini aniqla va o'sha vakansiyaning to'liq ssilkasi va ma'lumotlarini taqdim et!
+"""
 
     if vacancies_context:
         system_prompt += f"""
-        
-    SIZNING BAZANGIZDAGI OXIRGI REAL VAKANSIYALAR (HAQIQIY MA'LUMOTLAR):
+BAZADAGI REAL VAKANSIYALAR RO'YXATI (HAQIQIY MA'LUMOTLAR):
 {vacancies_context}
-        
-    KO'RSATMA: Foydalanuvchiga aynan yuqoridagi real vakansiyalardan eng mosini (kompaniya, lavozim, maosh, talablar) tilga olib tushuntir. Matn ichiga URL/ssilka yozma, ssilkani bot avtomatik tarzda kartochka qilib yuboradi.
-        """
 
-    answer = await call_gemini_api(user_message, system_prompt)
+KO'RSATMA: Foydalanuvchiga yuqoridagi real vakansiyalardan eng mosini (kompaniya, lavozim, maosh, talablar va uning haqiqiy havolasini) ko'rsatib javob ber.
+"""
+    else:
+        system_prompt += """
+BAZADAGI REAL VAKANSIYALAR: Hozircha bazada yangi vakansiya mavjud emas. Agar ish so'ralsa, /scan buyrug'ini bosishni tavsiya qil.
+"""
+
+    answer = await call_gemini_api(user_message, system_prompt, history=history)
     if answer:
         return answer
         

@@ -2,8 +2,9 @@ import logging
 import asyncio
 import httpx
 import re
+from datetime import datetime
 from typing import Dict, Any, Optional, List
-from config import TELEGRAM_BOT_TOKEN, MIN_MATCH_SCORE
+from config import TELEGRAM_BOT_TOKEN, MIN_MATCH_SCORE, TASHKENT_TZ
 from ai_analyzer import (
     chat_with_alfred, 
     get_last_error, 
@@ -48,6 +49,9 @@ from userbot import delete_hr_dialog, send_message_as_user
 from voice import generate_voice_message
 
 logger = logging.getLogger("Alfred.BotHandler")
+
+# Suhbat xotirasi (Chat history): har bir chat_id uchun oxirgi 10 ta xabarni saqlash
+chat_histories: Dict[str, List[Dict[str, str]]] = {}
 
 # O'zbekistondagi ommabop IT Telegram kanallari va ularning oddiy xalq tilidagi nomlari (aliaslar)
 CHANNEL_ALIASES = {
@@ -553,6 +557,20 @@ async def process_telegram_update(update: Dict[str, Any], trigger_scan_callback=
         await send_telegram_message(status_text, chat_id=chat_id)
         return
 
+    # 3.0. /health buyrug'i (Server va servislar sog'lig'ini tekshirish)
+    if text in ["/health", "health", "Health"]:
+        recent = get_recent_vacancies(limit=1)
+        last_err = get_last_error()
+        health_msg = (
+            "🟢 <b>Server Holati: Sog'lom (Healthy)</b>\n\n"
+            f"🤖 <b>AI Tizimi (Gemini):</b> {last_err}\n"
+            f"📊 <b>Ma'lumotlar bazasi:</b> Faol ({len(recent)} ta vakansiya saqlangan)\n"
+            f"⚡ <b>Telethon Userbot:</b> Faol\n"
+            f"⏱ <b>Vaqt:</b> {datetime.now(TASHKENT_TZ).strftime('%d-%m-%Y %H:%M')}"
+        )
+        await send_telegram_message(health_msg, chat_id=chat_id)
+        return
+
     # 3.1. /add_HR @username [Kompaniya] buyrug'i
     if text and text.startswith("/add_HR") or text.startswith("/add_hr"):
         parts = text.split()
@@ -778,6 +796,24 @@ async def process_telegram_update(update: Dict[str, Any], trigger_scan_callback=
                 asyncio.create_task(trigger_scan_callback())
             return
 
+    # 6.5. Buyruqlar himoyasi (boshqa noma'lum / buyruqlar AI chatga tushmasligi uchun)
+    if text and text.startswith("/"):
+        await send_telegram_message(
+            "⚠️ <b>Noma'lum buyruq!</b>\n\n"
+            "Mavjud buyruqlar:\n"
+            "• /start — Tizim imkoniyatlari\n"
+            "• /scan — Vakansiyalarni hoziroq qidirish\n"
+            "• /status — Tizim va AI holati\n"
+            "• /health — Server va servislar holati\n"
+            "• /my_jobs — Topshirilgan ishlar tarixi\n"
+            "• /channels — Kuzatilayotgan kanallar\n"
+            "• /keywords — Qidiruv kalit so'zlari\n"
+            "• /add_HR @username Kompaniya — HR kuzatuvga olish\n"
+            "• /call — Qo'ng'iroqni sinab ko'rish",
+            chat_id=chat_id
+        )
+        return
+
     # 7. Oddiy matnli yoki ovozli so'rov bo'lsa (Gemini orqali suhbat, vakansiyalar tahlili va ovozli javob)
     if text:
         logger.info(f"Foydalanuvchi xabari: {text} (ovozdan kelgan: {is_voice_input})")
@@ -791,91 +827,95 @@ async def process_telegram_update(update: Dict[str, Any], trigger_scan_callback=
         ]
         wants_voice = is_voice_input or any(vt in lower_msg for vt in voice_triggers)
 
-        # Real vakansiyalar haqida so'ralganmi?
-        vacancy_triggers = [
-            "vakansiya", "ish", "rabota", "job", "loyiha", "buyurtma", 
-            "taklif", "eng mos", "mos keladigan", "qanday ishlar", 
-            "qanaqa ishlar", "qaysi ish", "topilgan", "bor ishlar"
-        ]
-        is_vacancy_query = any(vt in lower_msg for vt in vacancy_triggers)
-
+        # Har doim bazadagi real so'nggi vakansiyalarni olamiz (yolg'on to'qishni oldini olish uchun)
+        vacancies = await ensure_real_vacancies(limit=5)
         vacancies_context = ""
-        vacancies = []
-        if is_vacancy_query:
-            vacancies = await ensure_real_vacancies(limit=5)
-            if vacancies:
-                vacancies_context_parts = []
-                for idx, vac in enumerate(vacancies[:5], 1):
-                    vacancies_context_parts.append(
-                        f"#{idx}. Lavozim: {vac.get('title')}\n"
-                        f"   Kompaniya: {vac.get('company', 'Kompaniya')}\n"
-                        f"   Maosh / Byudjet: {vac.get('salary') or 'Kelishilgan'}\n"
-                        f"   Moslik bali: {vac.get('match_score', 0)}%\n"
-                        f"   Turi: {vac.get('job_type', 'vacancy')}\n"
-                        f"   Qisqa ma'lumot: {vac.get('ai_summary', '')}\n"
-                        f"   Havola: {vac.get('url', '')}"
-                    )
-                vacancies_context = "\n\n".join(vacancies_context_parts)
+        if vacancies:
+            vacancies_context_parts = []
+            for idx, vac in enumerate(vacancies[:5], 1):
+                vacancies_context_parts.append(
+                    f"#{idx}. ID: {vac.get('id')}\n"
+                    f"   Lavozim: {vac.get('title')}\n"
+                    f"   Kompaniya/Manba: {vac.get('company', 'Kompaniya')} ({vac.get('source', '')})\n"
+                    f"   Maosh / Byudjet: {vac.get('salary') or 'Kelishilgan'}\n"
+                    f"   Moslik bali: {vac.get('match_score', 0)}%\n"
+                    f"   Turi: {vac.get('job_type', 'vacancy')}\n"
+                    f"   Tavsif / Xulosa: {vac.get('ai_summary', '')}\n"
+                    f"   Haqiqiy Havola: {vac.get('url', '')}"
+                )
+            vacancies_context = "\n\n".join(vacancies_context_parts)
+
+        # Suhbat tarixi (oxirgi 10 ta xabar)
+        history = chat_histories.setdefault(chat_id, [])
 
         # Gemini javobini olish
         ai_reply = await chat_with_alfred(
             user_message=text,
             vacancies_context=vacancies_context,
-            wants_voice=wants_voice
+            wants_voice=wants_voice,
+            history=history
         )
 
+        # Tarixni yangilash
+        history.append({"role": "user", "text": text})
+        history.append({"role": "model", "text": ai_reply})
+        if len(history) > 10:
+            chat_histories[chat_id] = history[-10:]
+
+        # Vakansiyani aniqlash va inline tugmalarni tayyorlash
+        target_vac = None
+        if vacancies:
+            for v in vacancies:
+                v_url = v.get("url", "")
+                v_id = str(v.get("id", ""))
+                v_title = (v.get("title") or "").lower()
+                v_comp = (v.get("company") or "").lower()
+                if (v_url and v_url in ai_reply) or (v_id and v_id in ai_reply):
+                    target_vac = v
+                    break
+                if v_title and len(v_title) > 3 and v_title in ai_reply.lower():
+                    target_vac = v
+                    break
+                if v_comp and len(v_comp) > 3 and v_comp in ai_reply.lower():
+                    target_vac = v
+                    break
+
+            if not target_vac:
+                vacancy_triggers = ["vakansiya", "ish", "rabota", "job", "loyiha", "buyurtma", "taklif", "eng mos", "qaysi", "ssilka", "link", "haqida", "qayerda", "rezyume"]
+                if any(vt in lower_msg for vt in vacancy_triggers):
+                    target_vac = vacancies[0]
+
+        reply_markup = None
+        if target_vac:
+            vac_id = str(target_vac.get("id"))
+            vac_url = target_vac.get("url", "https://t.me")
+            reply_markup = {
+                "inline_keyboard": [
+                    [
+                        {"text": "📄 PDF Rezyume", "callback_data": f"pdf_resume_{vac_id}"},
+                        {"text": "🎯 Suhbat savollari", "callback_data": f"interview_prep_{vac_id}"}
+                    ],
+                    [
+                        {"text": "✅ Topshirdim", "callback_data": f"applied_{vac_id}"},
+                        {"text": "🔗 E'lonni ochish", "url": vac_url}
+                    ]
+                ]
+            }
+
         if wants_voice:
-            # 1. Gemini javobini TTS orqali haqiqiy ovozli xabarga aylantirib yuborish
-            voice_file = await generate_voice_message(ai_reply, prepare_script=False)
+            # 1. Ovozli xabar yaratish va yuborish
+            voice_file = await generate_voice_message(ai_reply, prepare_script=True)
             if voice_file:
                 caption = "🎙 <b>Alfred — Ovozli Javob</b>"
-                if vacancies:
-                    top_v = vacancies[0]
-                    caption = f"🎙 <b>Eng mos taklif: {top_v.get('title')}</b> ({top_v.get('match_score', 0)}% moslik)"
+                if target_vac:
+                    caption = f"🎙 <b>{target_vac.get('title')}</b> ({target_vac.get('match_score', 0)}% moslik)"
                 await send_telegram_voice(voice_file, caption=caption, chat_id=chat_id)
-            else:
-                # Agar TTS da kutilmagan uzilish bo'lsa, xabar yo'qolmasligi uchun matn qilib yuboramiz
-                await send_telegram_message(ai_reply, chat_id=chat_id)
 
-            # 2. Agar vakansiya so'ralgan bo'lsa, pastidan havolani matn ko'rinishida tashlash
-            if vacancies:
-                top_v = vacancies[0]
-                source_badge = f"[{top_v.get('source', 'HH.UZ').upper()}]"
-                job_type_str = str(top_v.get("job_type", "")).lower()
-                type_badge = "[💰 FRILANS BUYURTMA]" if ("freelance" in job_type_str or "frilans" in job_type_str or "buyurtma" in job_type_str) else "[🏢 VAKANSIYA]"
-
-                link_card = (
-                    f"🔗 <b>Tavsiya etilgan eng mos vakansiya havolasi:</b>\n\n"
-                    f"{type_badge} {source_badge} <b>{top_v.get('title')}</b>\n"
-                    f"🏢 <b>Kompaniya / Buyurtmachi:</b> {top_v.get('company', 'Kompaniya')}\n"
-                )
-                if top_v.get("salary"):
-                    link_card += f"💰 <b>Maosh / Byudjet:</b> {top_v.get('salary')}\n"
-                link_card += (
-                    f"🎯 <b>Moslik darajasi:</b> {top_v.get('match_score', 0)}%\n"
-                    f"🌐 <b>Batafsil ko'rish / Topshirish:</b> <a href='{top_v.get('url')}'>{top_v.get('url')}</a>"
-                )
-
-                reply_markup = None
-                if "freelance" in job_type_str or "frilans" in job_type_str or "buyurtma" in job_type_str:
-                    reply_markup = {
-                        "inline_keyboard": [
-                            [{"text": "📨 Rezyume / Taklif yuborish", "callback_data": f"pitch:{top_v.get('id')}"}]
-                        ]
-                    }
-
-                await send_telegram_message(link_card, chat_id=chat_id, reply_markup=reply_markup)
+            # 2. To'liq professional matn va tugmalarni yuborish
+            await send_telegram_message(ai_reply, chat_id=chat_id, reply_markup=reply_markup)
         else:
-            # Oddiy matnli javob
-            await send_telegram_message(ai_reply, chat_id=chat_id)
-
-            # Agar vakansiya so'ralgan bo'lsa va javob ichida havola bo'lmasa, pastidan havolani qo'shib qo'yamiz
-            if vacancies and "http" not in ai_reply:
-                top_v = vacancies[0]
-                link_card = (
-                    f"\n🔗 <b>Eng mos ish havolasi:</b> <a href='{top_v.get('url')}'>{top_v.get('title')} ({top_v.get('company', 'Kompaniya')})</a>"
-                )
-                await send_telegram_message(link_card, chat_id=chat_id)
+            # Oddiy matnli javob va tegishli vakansiya tugmalari
+            await send_telegram_message(ai_reply, chat_id=chat_id, reply_markup=reply_markup)
 
 
 async def run_telegram_polling(trigger_scan_callback=None):
