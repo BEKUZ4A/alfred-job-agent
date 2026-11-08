@@ -109,7 +109,9 @@ def is_potentially_relevant(text: str) -> bool:
     python_keywords = [
         "python", "django", "fastapi", "flask", 
         "backend", "bekend", "py", "ai", "llm", 
-        "junior", "intern", "amaliyot", "stajyor", "stajirovka",
+        "tajribasiz", "tajribasizlar", "tajriba talab qilinmaydi", "tajribasi yo'q",
+        "без опыта", "bez opita", "no experience", "no-experience",
+        "junior", "intern", "amaliyot", "stajyor", "stajirovka", "стажер", "стажировка", "trainee",
         "dasturchi", "developer", "разработчик",
         "telegram bot", "телеграм бот", "bot kerak", "бот нужен", "парсер", "parser",
         "sayt", "сайт", "web dasturchi"
@@ -124,9 +126,13 @@ def is_potentially_relevant(text: str) -> bool:
         except Exception:
             pass
     
-    if "lead" in t and "junior" not in t and "intern" not in t:
+    is_entry_exempt = any(w in t for w in [
+        "junior", "intern", "staj", "amaliyot", "tajribasiz", 
+        "без опыта", "bez opita", "no experience"
+    ])
+    if "lead" in t and not is_entry_exempt:
         return False
-    if "senior" in t and "junior" not in t and "intern" not in t:
+    if "senior" in t and not is_entry_exempt:
         return False
     if "buxgalter" in t or "sotuvchi" in t or "ofitsiant" in t or "haydovchi" in t:
         return False
@@ -141,12 +147,15 @@ def _fetch_hh_uz_sync() -> List[Dict]:
     # 1. Rasmiy HH.ru API orqali so'rov yuborish
     try:
         api_url = "https://api.hh.ru/vacancies"
-        params = {
-            "area": "97",
-            "text": "Python OR Django OR FastAPI OR AI OR Backend OR Telegram bot OR Парсер",
-            "period": "1",
-            "per_page": "20"
-        }
+        # Tajriba bo'yicha qidiruv: noExperience (Tajribasiz / Без опыта) va between1And3 (1-3 yilgacha / Junior)
+        params = [
+            ("area", "97"),
+            ("text", "Python OR Django OR FastAPI OR AI OR Backend OR Telegram bot OR Парсер"),
+            ("period", "1"),
+            ("per_page", "25"),
+            ("experience", "noExperience"),
+            ("experience", "between1And3")
+        ]
         resp = httpx.get(api_url, params=params, headers=HH_API_HEADERS, timeout=10)
         if resp.status_code == 200:
             data = resp.json()
@@ -202,7 +211,7 @@ def _fetch_hh_uz_sync() -> List[Dict]:
     # 2. Zaxira (Fallback): Cloudflare va bloklashlarni aylanib o'tish uchun curl_cffi orqali hh.uz
     try:
         encoded_query = urllib.parse.quote("Python OR Django OR FastAPI OR AI OR Backend OR Telegram bot OR Парсер")
-        html_url = f"https://hh.uz/search/vacancy?area=97&text={encoded_query}&search_period=1&order_by=publication_time"
+        html_url = f"https://hh.uz/search/vacancy?area=97&text={encoded_query}&search_period=1&order_by=publication_time&experience=noExperience&experience=between1And3"
         resp = cffi_requests.get(html_url, impersonate="chrome", timeout=15)
         if resp.status_code == 200:
             soup = bs4.BeautifulSoup(resp.text, "html.parser")
@@ -261,7 +270,8 @@ def _fetch_olx_uz_sync() -> List[Dict]:
         "python", "dasturchi", "программист", 
         "telegram bot", "телеграм бот", 
         "sayt yaratish", "сайт под ключ", 
-        "ai", "backend"
+        "ai", "backend",
+        "python tajribasiz", "стажер python", "junior python", "dasturchi stajyor"
     ]
     vacancies = []
     seen_urls = set()

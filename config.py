@@ -73,8 +73,9 @@ TELEGRAM_CHANNELS = [
 # Nomzodning profili (AI tahlili uchun)
 CANDIDATE_PROFILE = """
 - Kasb: Python Backend Dasturchi / AI Assistant Developer
-- Daraja: Junior, Intern, AI-assisted developer, Freelance
+- Daraja: Tajribasiz (No experience / Без опыта), Intern, Stajyor, Junior, AI-assisted developer, Freelance
+- Tajriba talabi bo'yicha: Tajribasiz (0 yil tajriba / tajriba talab qilinmaydi), amaliyot, stajirovka va 1 yilgacha bo'lgan boshlang'ich takliflar hamda frilans buyurtmalar.
 - Asosiy texnologiyalar: Python, Django, FastAPI, PostgreSQL, Docker, Redis, Celery
 - Qo'shimcha qiziqishlar: AI Agentlar, Gemini API, LLM integratsiyasi
-- Qat'iy talab: Senior, Team Lead yoki 4-5 yildan ko'p tajriba so'ralgan ishlarni, shuningdek Python bilan aloqasi yo'q ishlarni rad etish.
+- Qat'iy talab: Tajribasiz va stajyorlik vakansiyalariga birinchi darajali ustunlik berish. Senior, Team Lead yoki 3-4+ yillik tajriba talab qilgan ishlarni rad etish.
 """

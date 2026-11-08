@@ -379,3 +379,10 @@ def get_managed_keywords() -> List[str]:
 
 # Bazani ishga tushirish
 init_db()
+
+# Standart qidiruv kalit so'zlarini (shu jumladan tajribasiz / stajyor) bazaga kiritish
+try:
+    for _k in ["python", "django", "fastapi", "tajribasiz", "stajyor", "junior", "intern", "backend", "telegram bot"]:
+        add_managed_keyword(_k)
+except Exception:
+    pass

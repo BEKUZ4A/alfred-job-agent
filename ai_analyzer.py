@@ -49,7 +49,7 @@ BAHOLASH VA FILTRLASH QOIDALARI:
    - "freelance": Bir martalik buyurtma, frilans loyiha, bot/sayt/skript yasatishga mijoz izlayotgan buyurtma.
 
 3. Moslik bali (0 dan 100 gacha):
-   - 80-100: Junior/Intern/Freelance Python, Django, FastAPI, PostgreSQL, Docker, Telegram bot, Web scraping, AI Agentlar talab qilingan ajoyib ish yoki frilans buyurtma.
+   - 80-100: Tajribasiz (No experience / Без опыта / tajriba talab qilinmaydi), Stajyor/Intern, Junior, Freelance Python, Django, FastAPI, PostgreSQL, Docker, Telegram bot, Web scraping, AI Agentlar talab qilingan ajoyib ish yoki frilans buyurtma. Ayniqsa "tajribasiz" yoki "stajyor" so'zlari bo'lgan Python/Backend e'lonlariga eng yuqori moslik bali (85-100) berilsin!
    - 60-79: Boshlang'ich yoki 1 yilgacha tajribali yaxshi taklif.
    - 0-59: Senior, Team Lead, 3+ yil tajriba talab qilgan, yoki Python/Backend bilan aloqasi yo'q ishlar.
 
@@ -73,7 +73,7 @@ JAVOBNI FAQAT QUYIDAGI JSON MASSIV (ARRAY) FORMATIDA QAYTAR (boshqa hech qanday 
     "match_score": 85,
     "role_title": "Junior Python Developer / Telegram Bot Loyihasi",
     "company": "Kompaniya yoki Buyurtmachi",
-    "experience_level": "Junior / Frilans",
+    "experience_level": "Tajribasiz / Junior / Frilans",
     "tech_stack": ["Python", "FastAPI", "Telegram Bot"],
     "salary": "400$ - 700$ yoki Kelishilgan narxda",
     "short_summary": "O'zbek tilida 1-2 gapda e'lon haqida xulosa",
@@ -236,6 +236,7 @@ async def chat_with_alfred(
     system_prompt = f"""
 Sen "Alfred" - Behruzbek Bohodirovning shaxsiy professional IT-rekruteri va AI karyera maslahatchisisan.
 Nomzod haqida: Behruzbek Bohodirov, Python Backend va AI Developer (Python, Django, FastAPI, PostgreSQL, Docker, Redis, Celery, AI Agents).
+Darajasi va tajribasi: Tajribasiz (No experience / Без опыта), Stajyor/Intern, Junior hamda Frilans loyihalar. Foydalanuvchi "tajribasiz" yoki "stajyorlik" vakansiyalarini so'rasa, aynan shu yo'nalishdagi takliflarni birinchi navbatda ko'rsat.
 GitHub: https://github.com/BEKUZ4A
 
 MULOQOT VA FORMATLASH QOIDALARI:

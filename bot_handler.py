@@ -65,7 +65,7 @@ CHANNEL_ALIASES = {
         "ish kerak toshkent", "ish kerak", "ishkerak", "toshkent ishlar", "ish_kerak", "bormi ishlar"
     ],
     "jobforjunior": [
-        "jobforjunior", "job for junior", "junior jobs", "job for juniors", "junior job", "jobjunior", "junior"
+        "jobforjunior", "job for junior", "junior jobs", "job for juniors", "junior job", "jobjunior", "junior", "tajribasiz", "tajribasiz ishlar"
     ],
     "freelance_uzb": [
         "freelance", "freelance uzb", "freelance_uzb", "frilans", "frilans uzb", "freelancer", "freelans"
@@ -74,7 +74,7 @@ CHANNEL_ALIASES = {
         "young june", "young_june", "young júnior", "young junior", "yang jyun"
     ],
     "young_intern": [
-        "young intern", "young_intern", "youngintern", "intern", "stajyor", "amaliyot"
+        "young intern", "young_intern", "youngintern", "intern", "stajyor", "amaliyot", "tajribasiz", "stajirovka"
     ],
     "UstozShogird": [
         "ustoz shogird", "ustozshogird", "ustoz_shogird", "ustoz-shogird", "ustoz", "ustoz shogird kanali"
@@ -578,7 +578,8 @@ async def process_telegram_update(update: Dict[str, Any], trigger_scan_callback=
             "Men 24/7 rejimda internetdan quyidagi manbalar bo'yicha ishlar va frilans buyurtmalarni qidiraman:\n"
             "• 🌐 <b>HH.UZ</b> (Bugungi yangi e'lonlar)\n"
             "• 📦 <b>OLX.UZ</b> (Bugungi yangi frilans buyurtmalar)\n"
-            "• 📱 <b>Telegram kanallar</b> (Ustoz-Shogird, JobLink, Rizqim, Freelance va b.)\n\n"
+            "• 📱 <b>Telegram kanallar</b> (Ustoz-Shogird, JobLink, Rizqim, Freelance va b.)\n"
+            "• 🎯 <b>Tajriba bo'yicha:</b> Tajribasiz (No experience / Без опыта), Stajyor va Junior vakansiyalar\n\n"
             "<b>Mavjud buyruqlar va imkoniyatlar:</b>\n"
             "👤 <b>/add_HR @username [Kompaniya]</b> — HR ni kuzatuvga olish (Telethon orqali jonli kuzatuv)\n"
             "👥 <b>/hr_list</b> — Kuzatuvdagi barcha HR lar va Userbot holati\n"
@@ -588,6 +589,7 @@ async def process_telegram_update(update: Dict[str, Any], trigger_scan_callback=
             "➖ <b>/remove_channel &lt;kanal&gt;</b> — Kanalni o'chirish\n"
             "🔑 <b>/keywords</b> — Qidiruv kalit so'zlarini boshqarish\n"
             "🔍 <b>/scan</b> — Bugungi yangi vakansiyalarni hoziroq skanerlash\n"
+            "🌱 <b>/tajribasiz</b> — Faqat tajribasiz (0 yil) va stajyorlik vakansiyalarini qidirish\n"
             "📞 <b>/call</b> — Qo'ng'iroqni test qilish\n"
             "📊 <b>/status</b> — Tizim va AI holatini tekshirish\n\n"
             "🎙 <b>Ovozli xabar:</b> Menga xohlagan vaqt ovozli xabar yuborishingiz yoki savol berishingiz mumkin!"
@@ -797,7 +799,7 @@ async def process_telegram_update(update: Dict[str, Any], trigger_scan_callback=
     if text == "/keywords":
         kws = get_managed_keywords()
         kw_text = "🔑 <b>Qidiruv kalit so'zlari:</b>\n\n"
-        kw_text += "<b>Standart:</b> Python, Django, FastAPI, AI, Backend, Telegram bot, Web scraping, Junior\n"
+        kw_text += "<b>Standart:</b> Python, Django, FastAPI, AI, Backend, Telegram bot, Web scraping, Junior, Tajribasiz (No experience)\n"
         if kws:
             kw_text += "\n<b>Qo'shilgan maxsus kalit so'zlar:</b>\n"
             for k in kws:
@@ -935,6 +937,18 @@ async def process_telegram_update(update: Dict[str, Any], trigger_scan_callback=
     # 6. Umumiy /scan yoki 'tekshir'/'qidir' buyrug'i
     if text:
         lower_text = text.lower().strip()
+        # 5.8. Tajribasiz / stajyorlik bo'yicha maxsus qidiruv
+        if lower_text in ["/tajribasiz", "tajribasiz", "tajribasizlar", "tajribasiz ishlar", "tajribasiz vakansiyalar"] or \
+           any(k in lower_text for k in ["tajribasiz ish", "tajribasiz vakansiya", "tajriba talab qilinmaydigan", "stajyorlik", "bez opita", "без опыта"]):
+            await send_telegram_message(
+                "🌱 <b>Tajriba bo'yicha qidiruv: Tajribasiz (No experience / Без опыта) va Stajyorlik!</b>\n"
+                "Barcha manbalar (HH.uz <code>noExperience</code> filtri, Telegram kanallar va OLX) bo'yicha tajribasiz va boshlang'ich e'lonlar qidirilmoqda...",
+                chat_id=chat_id
+            )
+            if trigger_scan_callback:
+                asyncio.create_task(trigger_scan_callback())
+            return
+
         if lower_text in ["/scan", "tekshir", "qidir", "hamma vakansiyalar", "barcha vakansiyalar"] or \
            any(cmd in lower_text for cmd in ["vakansiyalarni tekshir", "ishlarni qidir", "yangi ishlarni tekshir", "hamma ishlarni ko'r"]):
             await send_telegram_message(
