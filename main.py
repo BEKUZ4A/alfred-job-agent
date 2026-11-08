@@ -22,101 +22,105 @@ logging.basicConfig(
 )
 logger = logging.getLogger("Alfred.Main")
 
-# Global holat
+# Global holat va skanerlash himoyasi (Lock)
 is_scanning = False
+scan_lock = asyncio.Lock()
 
 async def run_vacancy_scan() -> int:
     """
-    Yangi vakansiyalarni qidirish, batch orqali tahlil qilish va moslarini yuborish asosiy funksiyasi.
+    Bugungi yangi vakansiyalarni qidirish, batch orqali tahlil qilish va moslarini yuborish asosiy funksiyasi.
     Har bitta e'lon alohida yuborilmaydi; barcha yangi e'lonlar bitta umumiy batch so'rovda Gemini'ga yuboriladi.
+    asyncio.Lock orqali ketma-ket qayta bosilganda tizim qotishi oldi olingan.
     """
     global is_scanning
-    if is_scanning:
-        logger.info("Qidiruv jarayoni allaqachon bajarilmoqda...")
+    if scan_lock.locked() or is_scanning:
+        logger.info("Qidiruv jarayoni allaqachon bajarilmoqda (scan_lock band)...")
         return 0
+
+    async with scan_lock:
+        is_scanning = True
+        matches = []
         
-    is_scanning = True
-    matches = []
-    
-    try:
-        logger.info("🚀 Yangi vakansiyalarni qidirish boshlandi...")
-        raw_vacancies = await scrape_all_sources()
-        logger.info(f"Jami {len(raw_vacancies)} ta xom e'lon yig'ildi.")
-        
-        # 1. Python kalit so'zlari va ilgari ko'rilmaganligi bo'yicha birlamchi filtr
-        unseen_filtered = []
-        for item in raw_vacancies:
-            vac_id = item["id"]
-            if is_vacancy_seen(vac_id):
-                continue
-            if not is_potentially_relevant(item["text"]):
-                continue
-            unseen_filtered.append(item)
+        try:
+            logger.info("🚀 Bugungi yangi vakansiyalarni qidirish boshlandi...")
+            raw_vacancies = await scrape_all_sources()
+            logger.info(f"Jami {len(raw_vacancies)} ta xom e'lon yig'ildi.")
             
-        logger.info(f"Tahlil uchun {len(unseen_filtered)} ta yangi e'lon saralandi.")
-        
-        if not unseen_filtered:
-            logger.info("Yangi ko'rilmagan mos keluvchi e'lonlar topilmadi.")
-            return 0
+            # 1. Python kalit so'zlari va ilgari ko'rilmaganligi bo'yicha birlamchi filtr
+            unseen_filtered = []
+            for item in raw_vacancies:
+                vac_id = item["id"]
+                if is_vacancy_seen(vac_id):
+                    continue
+                if not is_potentially_relevant(item["text"]):
+                    continue
+                unseen_filtered.append(item)
+                
+            logger.info(f"Tahlil uchun {len(unseen_filtered)} ta yangi e'lon saralandi.")
             
-        # 2. Batch tahlil: barcha yangi e'lonlarni bitta umumiy so'rovda (10 tadan bo'lib) yuborish
-        batch_size = 10
-        analysis_map = {}
-        for i in range(0, len(unseen_filtered), batch_size):
-            chunk = unseen_filtered[i:i + batch_size]
-            results = await batch_analyze_vacancies(chunk)
-            for res in results:
-                res_id = str(res.get("id"))
-                if res_id:
-                    analysis_map[res_id] = res
+            if not unseen_filtered:
+                logger.info("Yangi ko'rilmagan mos keluvchi e'lonlar topilmadi.")
+                return 0
+                
+            # 2. Batch tahlil: barcha yangi e'lonlarni bitta umumiy so'rovda (10 tadan bo'lib) yuborish
+            batch_size = 10
+            analysis_map = {}
+            for i in range(0, len(unseen_filtered), batch_size):
+                chunk = unseen_filtered[i:i + batch_size]
+                results = await batch_analyze_vacancies(chunk)
+                for res in results:
+                    res_id = str(res.get("id"))
+                    if res_id:
+                        analysis_map[res_id] = res
+                        
+            # 3. Natijalarni birlashtirish va SQLite bazaga yozish (ertaga qayta yuborilmasligi uchun)
+            for item in unseen_filtered:
+                vac_id = item["id"]
+                analysis = analysis_map.get(vac_id)
+                if not analysis:
+                    continue
                     
-        # 3. Natijalarni birlashtirish va SQLite bazaga yozish (ertaga qayta yuborilmasligi uchun)
-        for item in unseen_filtered:
-            vac_id = item["id"]
-            analysis = analysis_map.get(vac_id)
-            if not analysis:
-                continue
+                score = analysis.get("match_score", 0)
+                is_relevant = analysis.get("is_relevant", False)
                 
-            score = analysis.get("match_score", 0)
-            is_relevant = analysis.get("is_relevant", False)
-            
-            logger.info(f"Baho: {score}% | Mosmi: {is_relevant} | {item['title'][:40]}")
-            
-            # Bazaga ko'rilgan deb yozib qo'yamiz
-            job_type = analysis.get("job_type") or item.get("job_type", "vacancy")
-            item["job_type"] = job_type
-            mark_vacancy_seen(
-                vacancy_id=vac_id,
-                title=item["title"],
-                company=analysis.get("company", item.get("company", "")),
-                url=item["url"],
-                source=item["source"],
-                match_score=score,
-                ai_summary=analysis.get("short_summary", ""),
-                job_type=job_type,
-                raw_text=item.get("text", ""),
-                salary=analysis.get("salary", "")
-            )
-            
-            # Agar talab qilingan minimal balldan yuqori bo'lsa
-            if is_relevant and score >= MIN_MATCH_SCORE:
-                item["analysis"] = analysis
-                matches.append(item)
+                logger.info(f"Baho: {score}% | Mosmi: {is_relevant} | {item['title'][:40]}")
                 
-        # 4. Mos vakansiyalar topilsa, xabar va ovozli xabar yuborish
-        if matches:
-            logger.info(f"🎉 {len(matches)} ta mos vakansiya topildi! Foydalanuvchi ogohlantirilmoqda...")
-            await notify_user_about_vacancies(matches)
-        else:
-            logger.info("E'lonlar tahlil qilindi, ammo talabga mos yuqori balli vakansiya chiqmadi.")
+                # Bazaga ko'rilgan deb yozib qo'yamiz
+                job_type = analysis.get("job_type") or item.get("job_type", "vacancy")
+                item["job_type"] = job_type
+                mark_vacancy_seen(
+                    vacancy_id=vac_id,
+                    title=item["title"],
+                    company=analysis.get("company", item.get("company", "")),
+                    url=item["url"],
+                    source=item["source"],
+                    match_score=score,
+                    ai_summary=analysis.get("short_summary", ""),
+                    job_type=job_type,
+                    raw_text=item.get("text", ""),
+                    salary=analysis.get("salary", ""),
+                    posted_at=item.get("posted_at", "")
+                )
+                
+                # Agar talab qilingan minimal balldan yuqori bo'lsa
+                if is_relevant and score >= MIN_MATCH_SCORE:
+                    item["analysis"] = analysis
+                    matches.append(item)
+                    
+            # 4. Mos vakansiyalar topilsa, xabar va ovozli xabar yuborish
+            if matches:
+                logger.info(f"🎉 {len(matches)} ta mos vakansiya topildi! Foydalanuvchi ogohlantirilmoqda...")
+                await notify_user_about_vacancies(matches)
+            else:
+                logger.info("E'lonlar tahlil qilindi, ammo talabga mos yuqori balli vakansiya chiqmadi.")
+                
+            return len(matches)
             
-        return len(matches)
-        
-    except Exception as e:
-        logger.error(f"Skanerlashda kutilmagan xatolik: {e}")
-        return 0
-    finally:
-        is_scanning = False
+        except Exception as e:
+            logger.error(f"Skanerlashda kutilmagan xatolik: {e}")
+            return 0
+        finally:
+            is_scanning = False
 
 async def background_scheduler():
     """Ichki avtomatik taymer: har 15 daqiqada bir marta o'zi skanerlab turadi"""

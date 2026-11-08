@@ -33,33 +33,44 @@ def make_hash_id(source: str, identifier: str) -> str:
     """Har bir vakansiyaga yagona ID generatsiya qilish"""
     return hashlib.md5(f"{source}:{identifier}".encode("utf-8")).hexdigest()
 
-def is_within_last_24_hours(dt_str: str) -> bool:
+def is_published_today(dt_str: str) -> bool:
     """
-    Xabar so'nggi 24 soat ichida e'lon qilinganligini tekshirish.
-    Render yoki server qayta yonganda eski e'lonlar qayta yuborilmasligi uchun.
+    QAT'IY TALAB: E'lon chiqqan sana aynan BUGUNGI KUN (Toshkent vaqti UTC+5)
+    bilan mos kelishini tekshirish. Agar kechagi yoki oldingi kunlardagi post bo'lsa,
+    darhol False qaytaradi va tashlab ketiladi.
     """
     if not dt_str:
-        return True
+        return False
     try:
-        dt = datetime.fromisoformat(dt_str)
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        now = datetime.now(timezone.utc)
-        diff = now - dt
-        return timedelta(0) <= diff <= timedelta(hours=24)
-    except Exception:
-        return True
-
-def format_posted_at(dt_str: str) -> str:
-    """Vaqtni Toshkent vaqti (UTC+5) bo'yicha qulay formatda qaytarish"""
-    if not dt_str:
-        return "Noma'lum"
-    try:
-        dt = datetime.fromisoformat(dt_str)
+        clean_str = dt_str.replace("Z", "+00:00")
+        dt = datetime.fromisoformat(clean_str)
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
         dt_tash = dt.astimezone(TASHKENT_TZ)
-        return dt_tash.strftime("%d-%m-%Y %H:%M")
+        now_tash = datetime.now(TASHKENT_TZ)
+        return dt_tash.date() == now_tash.date()
+    except Exception as e:
+        logger.debug(f"Vaqtni tekshirishda xatolik ({dt_str}): {e}")
+        return False
+
+def is_within_last_24_hours(dt_str: str) -> bool:
+    """Orqaga moslik uchun bugungi kun tekshiruvi"""
+    return is_published_today(dt_str)
+
+def format_posted_at(dt_str: str) -> str:
+    """Vaqtni Toshkent vaqti (UTC+5) bo'yicha '🕒 Bugun, 14:30' shaklida qaytarish"""
+    if not dt_str:
+        return "Noma'lum"
+    try:
+        clean_str = dt_str.replace("Z", "+00:00")
+        dt = datetime.fromisoformat(clean_str)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        dt_tash = dt.astimezone(TASHKENT_TZ)
+        now_tash = datetime.now(TASHKENT_TZ)
+        if dt_tash.date() == now_tash.date():
+            return f"🕒 Bugun, {dt_tash.strftime('%H:%M')}"
+        return f"📅 {dt_tash.strftime('%d-%m-%Y %H:%M')}"
     except Exception:
         return dt_str if dt_str else "Noma'lum"
 
@@ -149,6 +160,8 @@ def _fetch_hh_uz_sync() -> List[Dict]:
                 company = item.get("employer", {}).get("name", "Noma'lum kompaniya")
                 url = item.get("alternate_url", f"https://hh.uz/vacancy/{v_id}")
                 pub_at = item.get("published_at", "")
+                if not is_published_today(pub_at):
+                    continue
                 
                 # To'liq talablarni alohida https://api.hh.ru/vacancies/{id} dan olish
                 full_desc = ""
@@ -271,6 +284,10 @@ def _fetch_olx_uz_sync() -> List[Dict]:
                         continue
 
                     title = item.get("title", "")
+                    created_time = item.get("created_time", "")
+                    if created_time and not is_published_today(created_time):
+                        continue
+
                     desc = item.get("description", "")
                     # HTML teglarni tozalash
                     soup = bs4.BeautifulSoup(desc, "html.parser")
@@ -328,12 +345,12 @@ async def scrape_telegram_channel(channel: str, today_only: bool = True) -> List
             # Oxirgi 25 ta xabarni tekshiramiz
             for msg in messages[-25:]:
                 time_elem = msg.find("time")
-                dt_str = ""
-                if time_elem and time_elem.get("datetime"):
-                    dt_str = time_elem.get("datetime")
-                    # Oxirgi 24 soatlik xabarlarni tekshirish
-                    if today_only and not is_within_last_24_hours(dt_str):
-                        continue
+                if not time_elem or not time_elem.get("datetime"):
+                    continue
+                dt_str = time_elem.get("datetime")
+                # QAT'IY SHART: Faqat BUGUNGI SANA (UTC+5 Toshkent) e'lonlarini olish, eskilarini tashlab ketish
+                if today_only and not is_published_today(dt_str):
+                    continue
                         
                 text_elem = msg.find("div", class_="tgme_widget_message_text")
                 if not text_elem:

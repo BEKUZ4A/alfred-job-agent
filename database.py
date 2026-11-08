@@ -2,7 +2,7 @@ import os
 import sqlite3
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional, Any
-from config import DATABASE_URL
+from config import DATABASE_URL, TASHKENT_TZ
 
 DB_FILE = os.path.join(os.path.dirname(__file__), "seen_vacancies.db")
 
@@ -66,6 +66,7 @@ def init_db():
             raw_text TEXT DEFAULT '',
             salary TEXT DEFAULT '',
             red_flag TEXT DEFAULT '',
+            posted_at TEXT DEFAULT '',
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
         CREATE TABLE IF NOT EXISTS tracked_hrs (
@@ -77,6 +78,7 @@ def init_db():
             cal_event_3d TEXT DEFAULT '',
             cal_event_7d TEXT DEFAULT '',
             last_message TEXT DEFAULT '',
+            last_seen_msg_id BIGINT DEFAULT 0,
             last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
         CREATE TABLE IF NOT EXISTS applied_jobs (
@@ -111,6 +113,7 @@ def init_db():
             raw_text TEXT DEFAULT '',
             salary TEXT DEFAULT '',
             red_flag TEXT DEFAULT '',
+            posted_at TEXT DEFAULT '',
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
         """)
@@ -124,6 +127,7 @@ def init_db():
             cal_event_3d TEXT DEFAULT '',
             cal_event_7d TEXT DEFAULT '',
             last_message TEXT DEFAULT '',
+            last_seen_msg_id INTEGER DEFAULT 0,
             last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
         """)
@@ -152,10 +156,21 @@ def init_db():
         """)
         
         # Ustunlar mavjudligini tekshirish
-        for col, col_type in [("job_type", "TEXT DEFAULT 'vacancy'"), ("raw_text", "TEXT DEFAULT ''"), 
-                              ("salary", "TEXT DEFAULT ''"), ("red_flag", "TEXT DEFAULT ''")]:
+        for col, col_type in [
+            ("job_type", "TEXT DEFAULT 'vacancy'"), 
+            ("raw_text", "TEXT DEFAULT ''"), 
+            ("salary", "TEXT DEFAULT ''"), 
+            ("red_flag", "TEXT DEFAULT ''"),
+            ("posted_at", "TEXT DEFAULT ''")
+        ]:
             try:
                 cursor.execute(f"ALTER TABLE seen_vacancies ADD COLUMN {col} {col_type}")
+            except sqlite3.OperationalError:
+                pass
+
+        for col, col_type in [("last_seen_msg_id", "INTEGER DEFAULT 0")]:
+            try:
+                cursor.execute(f"ALTER TABLE tracked_hrs ADD COLUMN {col} {col_type}")
             except sqlite3.OperationalError:
                 pass
 
@@ -179,12 +194,13 @@ def mark_vacancy_seen(
     job_type: str = "vacancy",
     raw_text: str = "",
     salary: str = "",
-    red_flag: str = ""
+    red_flag: str = "",
+    posted_at: str = ""
 ):
     if is_postgres():
         execute_query("""
-        INSERT INTO seen_vacancies (id, title, company, url, source, match_score, ai_summary, job_type, raw_text, salary, red_flag, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        INSERT INTO seen_vacancies (id, title, company, url, source, match_score, ai_summary, job_type, raw_text, salary, red_flag, posted_at, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
         ON CONFLICT (id) DO UPDATE SET
             title = EXCLUDED.title,
             company = EXCLUDED.company,
@@ -194,19 +210,33 @@ def mark_vacancy_seen(
             job_type = EXCLUDED.job_type,
             raw_text = EXCLUDED.raw_text,
             salary = EXCLUDED.salary,
-            red_flag = EXCLUDED.red_flag
-        """, (vacancy_id, title, company, url, source, match_score, ai_summary, job_type, raw_text, salary, red_flag), commit=True)
+            red_flag = EXCLUDED.red_flag,
+            posted_at = EXCLUDED.posted_at
+        """, (vacancy_id, title, company, url, source, match_score, ai_summary, job_type, raw_text, salary, red_flag, posted_at), commit=True)
     else:
         execute_query("""
-        INSERT OR REPLACE INTO seen_vacancies (id, title, company, url, source, match_score, ai_summary, job_type, raw_text, salary, red_flag, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-        """, (vacancy_id, title, company, url, source, match_score, ai_summary, job_type, raw_text, salary, red_flag), commit=True)
+        INSERT OR REPLACE INTO seen_vacancies (id, title, company, url, source, match_score, ai_summary, job_type, raw_text, salary, red_flag, posted_at, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        """, (vacancy_id, title, company, url, source, match_score, ai_summary, job_type, raw_text, salary, red_flag, posted_at), commit=True)
 
 def get_vacancy_by_id(vacancy_id: str) -> Optional[Dict]:
     return execute_query("SELECT * FROM seen_vacancies WHERE id = ?", (vacancy_id,), fetch_one=True)
 
 def get_recent_vacancies(limit: int = 10) -> List[Dict]:
     return execute_query("SELECT * FROM seen_vacancies ORDER BY created_at DESC LIMIT ?", (limit,), fetch_all=True) or []
+
+def get_today_vacancies(limit: int = 10) -> List[Dict]:
+    """Bugungi (Toshkent vaqti UTC+5) haqiqiy vakansiyalarni qaytarish"""
+    today_str = datetime.now(TASHKENT_TZ).strftime("%Y-%m-%d")
+    res = execute_query("""
+    SELECT * FROM seen_vacancies 
+    WHERE created_at LIKE ? OR posted_at LIKE ?
+    ORDER BY match_score DESC, created_at DESC 
+    LIMIT ?
+    """, (f"%{today_str}%", f"%{today_str}%", limit), fetch_all=True)
+    if not res:
+        res = execute_query("SELECT * FROM seen_vacancies ORDER BY created_at DESC LIMIT ?", (limit,), fetch_all=True)
+    return res or []
 
 def get_top_vacancies(limit: int = 5, min_score: int = 50) -> List[Dict]:
     res = execute_query("""
@@ -225,8 +255,8 @@ def add_tracked_hr(username: str, company: str = "", cal_event_3d: str = "", cal
     username = username.strip().lstrip("@").lower()
     if is_postgres():
         execute_query("""
-        INSERT INTO tracked_hrs (username, company, cal_event_3d, cal_event_7d, status, last_updated)
-        VALUES (?, ?, ?, ?, 'waiting', CURRENT_TIMESTAMP)
+        INSERT INTO tracked_hrs (username, company, cal_event_3d, cal_event_7d, status, last_seen_msg_id, last_updated)
+        VALUES (?, ?, ?, ?, 'waiting', 0, CURRENT_TIMESTAMP)
         ON CONFLICT (username) DO UPDATE SET
             company = EXCLUDED.company,
             cal_event_3d = EXCLUDED.cal_event_3d,
@@ -236,9 +266,18 @@ def add_tracked_hr(username: str, company: str = "", cal_event_3d: str = "", cal
         """, (username, company, cal_event_3d, cal_event_7d), commit=True)
     else:
         execute_query("""
-        INSERT OR REPLACE INTO tracked_hrs (username, company, cal_event_3d, cal_event_7d, status, last_updated)
-        VALUES (?, ?, ?, ?, 'waiting', CURRENT_TIMESTAMP)
+        INSERT OR REPLACE INTO tracked_hrs (username, company, cal_event_3d, cal_event_7d, status, last_seen_msg_id, last_updated)
+        VALUES (?, ?, ?, ?, 'waiting', 0, CURRENT_TIMESTAMP)
         """, (username, company, cal_event_3d, cal_event_7d), commit=True)
+
+def update_hr_last_msg(username: str, msg_id: int, message_text: str = "", status: str = "replied"):
+    """Telethon orqali kelgan yangi xabar ID si va matnini yangilash"""
+    username = username.strip().lstrip("@").lower()
+    execute_query("""
+    UPDATE tracked_hrs 
+    SET last_seen_msg_id = ?, last_message = ?, status = ?, last_updated = CURRENT_TIMESTAMP 
+    WHERE LOWER(username) = ?
+    """, (msg_id, message_text, status, username), commit=True)
 
 def get_tracked_hr(username: str) -> Optional[Dict]:
     username = username.strip().lstrip("@").lower()

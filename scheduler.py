@@ -9,13 +9,26 @@ logger = logging.getLogger("Alfred.Scheduler")
 
 async def run_hr_reminder_loop():
     """
-    Kuzatuvdagi HR larni davriy tekshirish:
-    - 3 kundan keyin: eslatma yuborish uchun tayyor follow-up matn chiqarish
-    - 7 kundan keyin: kalendar va chatdan o'chirishni so'rash
+    Kuzatuvdagi HR larni davriy (har 5 daqiqada) tekshirish:
+    1. Telethon Userbot orqali oxirgi xabarlarni majburiy tekshirish (poll)
+    2. 3 kundan keyin: HR ga yuborish uchun tayyor follow-up matn chiqarish
+    3. 7 kundan keyin: lichka chatidan o'chirishni so'rash (Google Calendar'siz)
     """
-    logger.info("🟢 HR eslatma va tozalash kuzatuvchisi fonda ishga tushdi!")
+    logger.info("🟢 HR eslatma va tozalash kuzatuvchisi (har 5 daqiqada) ishga tushdi!")
+    
+    # 30 soniya kutib, userbot to'liq ulanib olishini kutamiz
+    await asyncio.sleep(30)
+
     while True:
         try:
+            # 1. Userbot orqali yangi xabarlarni majburiy tekshirish
+            try:
+                from userbot import check_tracked_hrs_poll
+                await check_tracked_hrs_poll()
+            except Exception as e_poll:
+                logger.debug(f"Userbot poll tekshiruvida ogohlantirish: {e_poll}")
+
+            # 2. Bazadagi HR larni muddatlarini tekshirish
             hrs = get_all_tracked_hrs()
             now = datetime.now(timezone.utc)
             for hr in hrs:
@@ -27,30 +40,29 @@ async def run_hr_reminder_loop():
                     continue
 
                 try:
-                    # SQLite yoki Postgres formatlarini to'g'ri o'qish
                     raw_dt = str(added_at_str).replace("Z", "+00:00")
                     if "." in raw_dt:
                         raw_dt = raw_dt.split(".")[0]
                     added_at = datetime.fromisoformat(raw_dt)
                     if added_at.tzinfo is None:
                         added_at = added_at.replace(tzinfo=timezone.utc)
-                except Exception as e_dt:
+                except Exception:
                     continue
 
                 diff = now - added_at
 
-                # 7 kunlik tekshiruv (agar javob bermagan bo'lsa)
+                # 7 kunlik tekshiruv (agar HR javob bermagan bo'lsa)
                 if diff >= timedelta(days=7) and status in ["waiting", "reminder_sent"]:
                     update_hr_status(username, "prompted_delete")
                     text = (
                         f"⚠️ <b>HR @{username} ({company or 'Kompaniya'}) 7 kun ichida javob bermadi.</b>\n\n"
-                        f"Uni Google Calendar'dan va Telegram lichkangizdan butunlay o'chirib tashlaymi?"
+                        f"Uni shaxsiy Telegram lichkangizdan butunlay o'chirib tashlaymi?"
                     )
                     reply_markup = {
                         "inline_keyboard": [
                             [
-                                {"text": "🗑 Ha, Kalendar va Telegramdan o'chir", "callback_data": f"delete_hr_yes_{username}"},
-                                {"text": "⏳ Yo'q, yana kutamiz", "callback_data": f"delete_hr_no_{username}"}
+                                {"text": "🗑 Ha, Telegramdan o'chir", "callback_data": f"delete_hr_yes_{username}"},
+                                {"text": "⏳ Yo'q, qolsin", "callback_data": f"delete_hr_no_{username}"}
                             ]
                         ]
                     }
@@ -70,5 +82,5 @@ async def run_hr_reminder_loop():
         except Exception as e:
             logger.error(f"Scheduler xatoligi: {e}")
 
-        # Har 10 daqiqada tekshiradi
-        await asyncio.sleep(600)
+        # Har 5 daqiqada (300 soniya) tekshiradi
+        await asyncio.sleep(300)

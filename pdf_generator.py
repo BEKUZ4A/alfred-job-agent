@@ -1,15 +1,64 @@
 import os
 import tempfile
 import time
-from reportlab.lib.pagesizes import letter, A4
+import logging
+from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable
 from reportlab.lib.units import inch
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
+
+logger = logging.getLogger("Alfred.PDF")
+
+FONT_NAME = "Helvetica"
+FONT_BOLD = "Helvetica-Bold"
+
+def init_fonts():
+    global FONT_NAME, FONT_BOLD
+    font_path = os.path.join(os.path.dirname(__file__), "DejaVuSans.ttf")
+    if os.path.exists(font_path):
+        try:
+            pdfmetrics.registerFont(TTFont("DejaVuSans", font_path))
+            FONT_NAME = "DejaVuSans"
+            FONT_BOLD = "DejaVuSans"
+            logger.info(f"DejaVuSans shrifti muvaffaqiyatli yuklandi: {font_path}")
+            return
+        except Exception as e:
+            logger.warning(f"DejaVuSans yuklashda xato: {e}")
+
+    windows_arial = "C:\\Windows\\Fonts\\arial.ttf"
+    if os.path.exists(windows_arial):
+        try:
+            pdfmetrics.registerFont(TTFont("DejaVuSans", windows_arial))
+            FONT_NAME = "DejaVuSans"
+            FONT_BOLD = "DejaVuSans"
+            logger.info("Windows Arial shrifti DejaVuSans sifatida yuklandi.")
+        except Exception as e:
+            logger.warning(f"Windows Arial yuklashda xato: {e}")
+
+init_fonts()
+
+def normalize_text_for_pdf(text: str) -> str:
+    """O'zbekcha maxsus harflar (o', g', ʻ, ʼ, ‘, ’) va tirelarni xatosiz formatlash"""
+    if not text:
+        return ""
+    text = (
+        text.replace("ʻ", "'")
+            .replace("ʼ", "'")
+            .replace("‘", "'")
+            .replace("’", "'")
+            .replace("`", "'")
+            .replace("–", "-")
+            .replace("—", "-")
+    )
+    return text
 
 def generate_pdf_resume(tailored_summary: str = "", target_job_title: str = "", target_company: str = "") -> str:
     """
     Behruzbek Bohodirov uchun professional, chiroyli dizayndagi 1-sahifali PDF Rezyume generatsiya qilish.
+    O'zbek harflari (o', g', ') va Kirill yozuvlari to'liq qo'llab-quvvatlanadi.
     """
     temp_dir = tempfile.gettempdir()
     file_name = f"Behruzbek_Bohodirov_CV_{int(time.time())}.pdf"
@@ -26,7 +75,6 @@ def generate_pdf_resume(tailored_summary: str = "", target_job_title: str = "", 
 
     styles = getSampleStyleSheet()
 
-    # Maxsus stillar
     PRIMARY_COLOR = colors.HexColor("#1A365D")  # To'q ko'k
     SECONDARY_COLOR = colors.HexColor("#2B6CB0")  # Jonli ko'k
     TEXT_COLOR = colors.HexColor("#2D3748")  # To'q kulrang
@@ -35,9 +83,9 @@ def generate_pdf_resume(tailored_summary: str = "", target_job_title: str = "", 
     title_style = ParagraphStyle(
         "DocTitle",
         parent=styles["Normal"],
-        fontName="Helvetica-Bold",
-        fontSize=20,
-        leading=24,
+        fontName=FONT_BOLD,
+        fontSize=18,
+        leading=22,
         textColor=PRIMARY_COLOR,
         alignment=0
     )
@@ -45,9 +93,9 @@ def generate_pdf_resume(tailored_summary: str = "", target_job_title: str = "", 
     subtitle_style = ParagraphStyle(
         "DocSubtitle",
         parent=styles["Normal"],
-        fontName="Helvetica-Bold",
-        fontSize=11,
-        leading=14,
+        fontName=FONT_BOLD,
+        fontSize=10.5,
+        leading=13.5,
         textColor=SECONDARY_COLOR,
         alignment=0
     )
@@ -55,7 +103,7 @@ def generate_pdf_resume(tailored_summary: str = "", target_job_title: str = "", 
     contact_style = ParagraphStyle(
         "ContactLine",
         parent=styles["Normal"],
-        fontName="Helvetica",
+        fontName=FONT_NAME,
         fontSize=8.5,
         leading=11,
         textColor=MUTED_COLOR,
@@ -65,9 +113,9 @@ def generate_pdf_resume(tailored_summary: str = "", target_job_title: str = "", 
     section_heading = ParagraphStyle(
         "SectionHeading",
         parent=styles["Normal"],
-        fontName="Helvetica-Bold",
-        fontSize=11,
-        leading=14,
+        fontName=FONT_BOLD,
+        fontSize=10.5,
+        leading=13.5,
         textColor=PRIMARY_COLOR,
         spaceAfter=3
     )
@@ -75,7 +123,7 @@ def generate_pdf_resume(tailored_summary: str = "", target_job_title: str = "", 
     body_style = ParagraphStyle(
         "BodyDark",
         parent=styles["Normal"],
-        fontName="Helvetica",
+        fontName=FONT_NAME,
         fontSize=8.5,
         leading=11.5,
         textColor=TEXT_COLOR
@@ -84,7 +132,7 @@ def generate_pdf_resume(tailored_summary: str = "", target_job_title: str = "", 
     bold_label = ParagraphStyle(
         "BoldLabel",
         parent=styles["Normal"],
-        fontName="Helvetica-Bold",
+        fontName=FONT_BOLD,
         fontSize=8.5,
         leading=11.5,
         textColor=TEXT_COLOR
@@ -96,7 +144,7 @@ def generate_pdf_resume(tailored_summary: str = "", target_job_title: str = "", 
     story.append(Paragraph("BEHRUZBEK BOHODIROV", title_style))
     header_subtitle = "Python Backend & AI Developer"
     if target_job_title:
-        header_subtitle += f" | Applying for: {target_job_title}"
+        header_subtitle += f" | Applying for: {normalize_text_for_pdf(target_job_title)}"
     story.append(Paragraph(header_subtitle, subtitle_style))
     story.append(Spacer(1, 4))
 
@@ -106,21 +154,21 @@ def generate_pdf_resume(tailored_summary: str = "", target_job_title: str = "", 
         "<b>GitHub:</b> github.com/BEKUZ4A &nbsp;|&nbsp; "
         "<b>Toshkent, O'zbekiston</b>"
     )
-    story.append(Paragraph(contacts, contact_style))
-    story.append(Spacer(1, 6))
-    story.append(HRFlowable(width="100%", thickness=1.5, color=SECONDARY_COLOR, spaceAfter=8, spaceBefore=2))
+    story.append(Paragraph(normalize_text_for_pdf(contacts), contact_style))
+    story.append(Spacer(1, 5))
+    story.append(HRFlowable(width="100%", thickness=1.5, color=SECONDARY_COLOR, spaceAfter=7, spaceBefore=2))
 
     # 2. PROFESSIONAL PROFILE / SUMMARY
     story.append(Paragraph("PROFESSIONAL XULOSA (SUMMARY)", section_heading))
     if not tailored_summary:
         tailored_summary = (
             "Python, Django, FastAPI va zamonaviy AI Agent texnologiyalari (Gemini, Claude, Cursor) "
-            "bo'yicha mustahkam bilim va amaliy loyihalarga ega Backend dasturchi. Yuqori yuklamali "
+            "bo'yicha mustahkam bilim va amaliy tajribaga ega Backend dasturchi. Yuqori yuklamali "
             "tizimlar, mikroxizmatlar, Docker containerizatsiya, PostgreSQL ma'lumotlar bazasi va "
             "avtonom botlar ishlab chiqishda tajribali. Muammolarga tezkor yechim topuvchi va natijaga yo'naltirilgan."
         )
-    story.append(Paragraph(tailored_summary, body_style))
-    story.append(Spacer(1, 6))
+    story.append(Paragraph(normalize_text_for_pdf(tailored_summary), body_style))
+    story.append(Spacer(1, 5))
 
     # 3. TEXNIK STEK
     story.append(Paragraph("TEXNIK BILIM VA KO'NIKMALAR (TECHNICAL SKILLS)", section_heading))
@@ -151,7 +199,7 @@ def generate_pdf_resume(tailored_summary: str = "", target_job_title: str = "", 
         ('RIGHTPADDING', (0,0), (-1,-1), 0),
     ]))
     story.append(t_skills)
-    story.append(Spacer(1, 6))
+    story.append(Spacer(1, 5))
 
     # 4. AMALIY LOYIHALAR
     story.append(Paragraph("AMALIY LOYIHALAR (FEATURED PROJECTS)", section_heading))
@@ -186,10 +234,10 @@ def generate_pdf_resume(tailored_summary: str = "", target_job_title: str = "", 
     ]
 
     for p_title, p_tech, p_desc in projects:
-        story.append(Paragraph(f"• <b>{p_title}</b>", bold_label))
-        story.append(Paragraph(f"&nbsp;&nbsp;<i>{p_tech}</i>", contact_style))
-        story.append(Paragraph(f"&nbsp;&nbsp;{p_desc}", body_style))
-        story.append(Spacer(1, 3))
+        story.append(Paragraph(normalize_text_for_pdf(f"• <b>{p_title}</b>"), bold_label))
+        story.append(Paragraph(normalize_text_for_pdf(f"&nbsp;&nbsp;<i>{p_tech}</i>"), contact_style))
+        story.append(Paragraph(normalize_text_for_pdf(f"&nbsp;&nbsp;{p_desc}"), body_style))
+        story.append(Spacer(1, 2.5))
 
     story.append(Spacer(1, 3))
 
@@ -201,7 +249,7 @@ def generate_pdf_resume(tailored_summary: str = "", target_job_title: str = "", 
         "• <b>Tillar:</b> O'zbek tili (Ona tili), Rus tili (Texnik/Muloqot), Ingliz tili (Texnik hujjatlar va dasturlash darajasi)"
     ]
     for ach in achievements:
-        story.append(Paragraph(ach, body_style))
+        story.append(Paragraph(normalize_text_for_pdf(ach), body_style))
         story.append(Spacer(1, 2))
 
     doc.build(story)

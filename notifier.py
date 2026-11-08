@@ -33,15 +33,19 @@ def is_call_allowed_now() -> bool:
 def format_posted_at(posted_at: str) -> str:
     """Vakansiya e'lon qilingan vaqtini Toshkent vaqtiga o'girish"""
     if not posted_at:
-        return "Noma'lum"
+        return "🕒 Bugun"
     try:
-        dt = datetime.fromisoformat(posted_at)
+        clean_str = posted_at.replace("Z", "+00:00")
+        dt = datetime.fromisoformat(clean_str)
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
         dt_tash = dt.astimezone(TASHKENT_TZ)
-        return dt_tash.strftime("%d-%m-%Y %H:%M")
+        now_tash = datetime.now(TASHKENT_TZ)
+        if dt_tash.date() == now_tash.date():
+            return f"🕒 Bugun, {dt_tash.strftime('%H:%M')}"
+        return f"📅 {dt_tash.strftime('%d-%m-%Y %H:%M')}"
     except (ValueError, TypeError):
-        return posted_at if posted_at else "Noma'lum"
+        return posted_at if posted_at else "🕒 Bugun"
 
 async def make_call(text: str = "Sizga mos yangi vakansiya chiqdi", force: bool = False) -> bool:
     """
@@ -341,12 +345,12 @@ async def notify_user_about_vacancies(matches: List[Dict[str, Any]]):
             vac_url = vac.get("url", "https://t.me")
 
             # Inline tugmalar:
-            # 1-qator: 📄 PDF Rezyume | 🎯 Suhbat savollari
+            # 1-qator: 📝 Matn + 📄 PDF Rezyume | 🎯 Suhbat savollari
             # 2-qator: ✅ Topshirdim | 🔗 E'lonni ochish
             reply_markup = {
                 "inline_keyboard": [
                     [
-                        {"text": "📄 PDF Rezyume", "callback_data": f"pdf_resume_{vac_id}"},
+                        {"text": "📝 Matn + 📄 PDF Rezyume", "callback_data": f"resume_bundle_{vac_id}"},
                         {"text": "🎯 Suhbat savollari", "callback_data": f"interview_prep_{vac_id}"}
                     ],
                     [
@@ -360,12 +364,14 @@ async def notify_user_about_vacancies(matches: List[Dict[str, Any]]):
         except Exception as e:
             logger.error(f"Telegram matn yuborishda xato: {e}")
 
-async def send_hr_alert_to_bot(hr_username: str, company: str, original_msg: str, ai_summary: str, suggested_reply: str):
+async def send_hr_alert_to_bot(hr_username: str, company: str, original_msg: str, ai_summary: str, suggested_reply: str, time_str: str = ""):
     """HR xabar yozganda botga batafsil ma'lumot va ovozli xabarni chiqarish"""
     company_text = f" ({company})" if company else ""
+    time_badge = f"\n🕒 <b>Xabar vaqti:</b> {time_str}" if time_str else ""
     text = (
         f"🚨 <b>KUZATUVDAGI HR JAVOB YOZDI!</b>\n\n"
-        f"👤 <b>HR:</b> @{hr_username}{company_text}\n"
+        f"👤 <b>HR:</b> @{hr_username}{company_text}"
+        f"{time_badge}\n"
         f"💬 <b>Xabar:</b>\n<i>\"{original_msg}\"</i>\n\n"
         f"💡 <b>AI Xulosa:</b>\n{ai_summary}\n\n"
         f"📝 <b>Tavsiya etilgan javob varianti:</b>\n"
@@ -382,11 +388,13 @@ async def send_hr_alert_to_bot(hr_username: str, company: str, original_msg: str
 
     await send_telegram_message(text, reply_markup=reply_markup)
 
-    # ElevenLabs orqali qisqa ovozli xabar
+    # ElevenLabs orqali qisqa ovozli xabar (maksimal 250 belgi)
     try:
-        from voice import generate_elevenlabs_tts
+        from voice import generate_voice_message
         voice_text = f"Assalomu alaykum Behruzbek! Kuzatuvdagi HR {hr_username} sizga javob yozdi. {ai_summary}"
-        voice_file = await generate_elevenlabs_tts(voice_text)
+        if len(voice_text) > 240:
+            voice_text = voice_text[:237] + "..."
+        voice_file = await generate_voice_message(voice_text, prepare_script=False)
         if voice_file:
             await send_telegram_voice(voice_file, caption=f"🎙 HR @{hr_username} xabari xulosasi")
     except Exception as e:

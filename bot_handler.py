@@ -26,6 +26,7 @@ from notifier import (
 from scraper import scrape_telegram_channel, scrape_hh_uz, scrape_telegram_single_post
 from database import (
     get_recent_vacancies, 
+    get_today_vacancies,
     mark_vacancy_seen, 
     get_vacancy_by_id, 
     get_top_vacancies,
@@ -44,7 +45,6 @@ from database import (
     get_managed_keywords
 )
 from pdf_generator import generate_pdf_resume
-from google_calendar import create_hr_calendar_events, delete_calendar_event
 from userbot import delete_hr_dialog, send_message_as_user
 from voice import generate_voice_message
 
@@ -368,28 +368,38 @@ async def process_telegram_update(update: Dict[str, Any], trigger_scan_callback=
             await send_telegram_message(pitch_msg, chat_id=cb_chat_id)
             return
 
-        # 1. 📄 PDF Rezyume generatsiya qilish
-        if cb_data.startswith("pdf_resume_"):
-            vac_id = cb_data.replace("pdf_resume_", "")
+        # 1. 📝 Matn + 📄 PDF Rezyume generatsiya qilish (2 bosqichli to'plam)
+        if cb_data.startswith("resume_bundle_") or cb_data.startswith("pdf_resume_"):
+            vac_id = cb_data.replace("resume_bundle_", "").replace("pdf_resume_", "")
             vac = get_vacancy_by_id(vac_id)
             title = vac.get("title", "Python Dasturchi") if vac else "Python Dasturchi"
             company = vac.get("company", "") if vac else ""
             summary = vac.get("ai_summary", "") if vac else ""
+            raw_text = vac.get("raw_text") or f"{title} | {company} | {summary}" if vac else title
 
             await send_telegram_message(
-                f"⏳ <b>{title}</b> vakansiyasi uchun maxsus PDF rezyume tayyorlanmoqda...",
+                f"⏳ <b>{title}</b> ({company}) uchun tayyor Cover Letter va PDF rezyume tayyorlanmoqda...",
                 chat_id=cb_chat_id
             )
-            pdf_path = generate_pdf_resume(
-                tailored_summary=summary,
-                target_job_title=title,
-                target_company=company
-            )
-            await send_telegram_document(
-                pdf_path,
-                caption=f"📄 <b>Behruzbek_Bohodirov_CV.pdf</b>\n<i>{title} ({company}) vakansiyasiga moslashtirildi.</i>",
-                chat_id=cb_chat_id
-            )
+
+            # 1-xabar: Matnli Cover Letter + Qisqa CV
+            docs = await generate_tailored_resume_and_pitch(raw_text, user_instruction=f"Vakansiya: {title} ({company})")
+            await send_telegram_message(docs, chat_id=cb_chat_id)
+
+            # 2-xabar: 1-sahifali PDF Rezyume
+            try:
+                pdf_path = generate_pdf_resume(
+                    tailored_summary=summary,
+                    target_job_title=title,
+                    target_company=company
+                )
+                await send_telegram_document(
+                    pdf_path,
+                    caption=f"📄 <b>Behruzbek_Bohodirov_CV.pdf</b>\n<i>{title} ({company}) vakansiyasiga moslashtirildi.</i>",
+                    chat_id=cb_chat_id
+                )
+            except Exception as e_pdf:
+                logger.error(f"Bundle PDF yaratishda xato: {e_pdf}")
             return
 
         # 2. 🎯 Suhbat savollari generatsiya qilish
@@ -424,36 +434,29 @@ async def process_telegram_update(update: Dict[str, Any], trigger_scan_callback=
             )
             return
 
-        # 4. 🗑 Ha, Kalendar va Telegramdan o'chir
+        # 4. 🗑 Ha, Telegramdan o'chir
         if cb_data.startswith("delete_hr_yes_"):
             username = cb_data.replace("delete_hr_yes_", "").strip().lstrip("@")
-            hr = get_tracked_hr(username)
-            if hr:
-                # Calendar o'chirish
-                if hr.get("cal_event_3d"):
-                    delete_calendar_event(hr["cal_event_3d"])
-                if hr.get("cal_event_7d"):
-                    delete_calendar_event(hr["cal_event_7d"])
-                delete_tracked_hr(username)
+            delete_tracked_hr(username)
 
-            # Telegram lichkadan chatni butunlay o'chirish
+            # Telegram lichkadan chatni butunlay o'chirish (revoke=True)
             success_del = await delete_hr_dialog(username)
             if success_del:
                 await send_telegram_message(
-                    f"🗑 <b>HR @{username} Google Calendar va shaxsiy Telegramingizdan butunlay o'chirildi!</b>",
+                    f"🗑 <b>HR @{username} shaxsiy Telegramingizdan va ma'lumotlar bazasidan butunlay o'chirildi!</b>",
                     chat_id=cb_chat_id
                 )
             else:
                 await send_telegram_message(
-                    f"🗑 <b>HR @{username} bazadan va Kalendardan o'chirildi.</b> (Telegram dialogini o'chirishda xatolik)",
+                    f"🗑 <b>HR @{username} bazadan o'chirildi.</b> (Telegram dialogini o'chirishda ogohlantirish)",
                     chat_id=cb_chat_id
                 )
             return
 
-        # 5. ⏳ Yo'q, yana kutamiz
+        # 5. ⏳ Yo'q, qolsin
         if cb_data.startswith("delete_hr_no_"):
             username = cb_data.replace("delete_hr_no_", "").strip().lstrip("@")
-            update_hr_status(username, "kept")
+            update_hr_status(username, "waiting")
             await send_telegram_message(
                 f"⏳ <b>HR @{username} kuzatuvda saqlab qolindi.</b>",
                 chat_id=cb_chat_id
@@ -491,25 +494,39 @@ async def process_telegram_update(update: Dict[str, Any], trigger_scan_callback=
         
     chat_id = str(message.get("chat", {}).get("id"))
     text = message.get("text", "")
+    caption = message.get("caption", "")
     voice = message.get("voice") or message.get("audio")
     is_voice_input = bool(voice)
+
+    # Agar rasm yoki skrinshot izohida matn bo'lsa
+    if not text and caption:
+        text = caption
+
+    # Forward (boshqa kanaldan uzatilgan) xabar ekanligini aniqlash
+    is_forward = bool(
+        message.get("forward_date") or 
+        message.get("forward_from_chat") or 
+        message.get("forward_from") or 
+        message.get("forward_sender_name")
+    )
     
     # 1. /start buyrug'i
     if text == "/start":
         welcome_text = (
             "🤖 <b>Assalomu alaykum! Men Alfred — Sizning shaxsiy AI Karyera va Vakansiya Agentingizman.</b>\n\n"
             "Men 24/7 rejimda internetdan quyidagi manbalar bo'yicha ishlar va frilans buyurtmalarni qidiraman:\n"
-            "• 🌐 <b>HH.UZ</b> (Rasmiy API orqali eng so'nggi vakansiyalar)\n"
-            "• 📦 <b>OLX.UZ</b> (Yangi frilans buyurtmalar va ishlar)\n"
+            "• 🌐 <b>HH.UZ</b> (Bugungi yangi e'lonlar)\n"
+            "• 📦 <b>OLX.UZ</b> (Bugungi yangi frilans buyurtmalar)\n"
             "• 📱 <b>Telegram kanallar</b> (Ustoz-Shogird, JobLink, Rizqim, Freelance va b.)\n\n"
             "<b>Mavjud buyruqlar va imkoniyatlar:</b>\n"
-            "👤 <b>/add_HR @username [Kompaniya]</b> — HR ni kuzatuvga olish va Google Calendar'ga eslatma rejalashtirish\n"
+            "👤 <b>/add_HR @username [Kompaniya]</b> — HR ni kuzatuvga olish (Telethon orqali jonli kuzatuv)\n"
+            "👥 <b>/hr_list</b> — Kuzatuvdagi barcha HR lar va Userbot holati\n"
             "💼 <b>/my_jobs</b> — Topshirgan ishlaringiz tarixi va holati\n"
             "📢 <b>/channels</b> — Kuzatilayotgan kanallar ro'yxati\n"
             "➕ <b>/add_channel &lt;kanal&gt;</b> — Yangi kanal qo'shish\n"
             "➖ <b>/remove_channel &lt;kanal&gt;</b> — Kanalni o'chirish\n"
             "🔑 <b>/keywords</b> — Qidiruv kalit so'zlarini boshqarish\n"
-            "🔍 <b>/scan</b> — Barcha manbalarni hoziroq skanerlash\n"
+            "🔍 <b>/scan</b> — Bugungi yangi vakansiyalarni hoziroq skanerlash\n"
             "📞 <b>/call</b> — Qo'ng'iroqni test qilish\n"
             "📊 <b>/status</b> — Tizim va AI holatini tekshirish\n\n"
             "🎙 <b>Ovozli xabar:</b> Menga xohlagan vaqt ovozli xabar yuborishingiz yoki savol berishingiz mumkin!"
@@ -571,8 +588,8 @@ async def process_telegram_update(update: Dict[str, Any], trigger_scan_callback=
         await send_telegram_message(health_msg, chat_id=chat_id)
         return
 
-    # 3.1. /add_HR @username [Kompaniya] buyrug'i
-    if text and text.startswith("/add_HR") or text.startswith("/add_hr"):
+    # 3.1. /add_HR @username [Kompaniya] buyrug'i (Google Calendar'siz, SQLite va Userbot orqali)
+    if text and (text.startswith("/add_HR") or text.startswith("/add_hr")):
         parts = text.split()
         if len(parts) < 2:
             await send_telegram_message(
@@ -582,28 +599,50 @@ async def process_telegram_update(update: Dict[str, Any], trigger_scan_callback=
             )
             return
 
-        hr_user = parts[1].strip().lstrip("@")
+        hr_user = parts[1].strip().lstrip("@").lower()
         company = " ".join(parts[2:]).strip() if len(parts) > 2 else ""
 
-        # Google Calendar tadbirlarini rejalashtirish
-        cal_3d, cal_7d = create_hr_calendar_events(hr_user, company)
-
         # Bazaga saqlash
-        add_tracked_hr(hr_user, company=company, cal_event_3d=cal_3d, cal_event_7d=cal_7d)
-
-        cal_info = ""
-        if cal_3d or cal_7d:
-            cal_info = "\n📅 <b>Google Calendar:</b> 2 ta eslatma muvaffaqiyatli qo'shildi!"
-        else:
-            cal_info = "\n📅 <i>(Google Calendar sozlanmagan, faqat bot xotirasiga olindi)</i>"
+        add_tracked_hr(hr_user, company=company)
 
         resp_text = (
-            f"✅ <b>HR @{hr_user} ({company or 'Kompaniya'}) kuzatuvga olindi!</b>{cal_info}\n\n"
-            f"• <b>3 kundan keyin:</b> Eslatma (follow-up) yozish taklifi\n"
-            f"• <b>7 kundan keyin:</b> Javob bermasa chatni tozalash so'rovi\n\n"
-            f"💡 <i>Agar HR sizga Telegram lichkangizda yozsa: tadbirlar avtomatik bekor qilinadi va darhol sizga audio/matnli bildirishnoma yetkaziladi!</i>"
+            f"✅ <b>HR @{hr_user} ({company or 'Kompaniya'}) kuzatuvga olindi!</b>\n\n"
+            f"• <b>Jonli kuzatuv:</b> HR sizga shaxsiy Telegramingizda yozishi bilan avtomatik qo'ng'iroq / signal beraman!\n"
+            f"• <b>3 kundan keyin:</b> Eslatma (follow-up) yozish taklifini chiqaraman\n"
+            f"• <b>7 kundan keyin:</b> Javob bermasa lichkadan o'chirishni so'rayman\n\n"
+            f"💡 <i>Telethon Userbot orqali 24/7 nazorat qilinadi.</i>"
         )
         await send_telegram_message(resp_text, chat_id=chat_id)
+        return
+
+    # 3.15. /hr_list buyrug'i (Kuzatuvdagi barcha HR lar va Userbot holati)
+    if text and text in ["/hr_list", "/hrs", "hr_list"]:
+        from userbot import is_userbot_connected
+        tracked = get_all_tracked_hrs()
+        userbot_status = "🟢 Faol (Ulangan)" if is_userbot_connected() else "🟡 Kutish rejimida"
+        msg = f"👥 <b>Kuzatuvdagi HR lar va Userbot Holati:</b>\n\n"
+        msg += f"⚡ <b>Telethon Userbot:</b> {userbot_status}\n"
+        msg += f"📊 <b>Kuzatuvdagi HR lar soni:</b> {len(tracked)}\n\n"
+        if tracked:
+            for idx, h in enumerate(tracked, 1):
+                status_icon = "⏳ Kutilyapti"
+                st = h.get("status", "waiting")
+                if st == "replied":
+                    status_icon = "✅ Javob yozgan"
+                elif st == "reminder_sent":
+                    status_icon = "⏰ 3 kunlik eslatma berilgan"
+                elif st == "prompted_delete":
+                    status_icon = "⚠️ 7 kun o'tgan"
+                
+                u = h.get("username", "")
+                c = h.get("company") or "Kompaniya ko'rsatilmagan"
+                dt = str(h.get("added_at", ""))[:16]
+                last_m = h.get("last_message", "")
+                last_preview = f"\n   💬 <i>\"{last_m[:60]}...\"</i>" if last_m else ""
+                msg += f"{idx}. <b>@{u}</b> ({c}) — {status_icon}\n   📅 Qo'shildi: <i>{dt}</i>{last_preview}\n\n"
+        else:
+            msg += "<i>Hozircha birorta HR kuzatuvga olinmagan.\nQo'shish:</i> <code>/add_HR @username Kompaniya</code>"
+        await send_telegram_message(msg, chat_id=chat_id)
         return
 
     # 3.2. /my_jobs buyrug'i (Topshirilgan ishlar Mini-CRM)
@@ -724,6 +763,30 @@ async def process_telegram_update(update: Dict[str, Any], trigger_scan_callback=
         )
         text = transcribed.strip()
 
+    # 4.4. BOSHQA KANALDAN UZATILGAN (FORWARD) XABAR KELGANDA
+    if is_forward and text and len(text) > 15:
+        logger.info(f"Forward qilingan vakansiya aniqlandi ({len(text)} belgi)")
+        await send_telegram_message(
+            "📨 <b>Uzatilgan (forward) e'lon qabul qilindi!</b>\n"
+            "🤖 <i>Behruzbek Bohodirovning tajribasi asosida ushbu vakansiya uchun tayyor Cover Letter va PDF Rezyume shakllantirilmoqda...</i>",
+            chat_id=chat_id
+        )
+        docs = await generate_tailored_resume_and_pitch(text, user_instruction="Forward qilingan Telegram e'loni")
+        await send_telegram_message(docs, chat_id=chat_id)
+        try:
+            pdf_path = generate_pdf_resume(
+                tailored_summary="Python Backend & AI Developer. Microservices, FastAPI, Django, PostgreSQL, Docker, and Autonomous AI systems.",
+                target_job_title="Forwarded Vacancy"
+            )
+            await send_telegram_document(
+                pdf_path,
+                caption="📄 <b>Behruzbek_Bohodirov_CV.pdf</b>\n<i>Uzatilgan e'longa moslashtirildi.</i>",
+                chat_id=chat_id
+            )
+        except Exception as e_pdf:
+            logger.error(f"Forward PDF yaratishda xato: {e_pdf}")
+        return
+
     # 4.5. ANIQ TELEGRAM POST SSILKASI KELGANDA (Single Post Parser + Maxsus Rezyume / Cover Letter)
     # Masalan: https://t.me/UstozShogird/45810 shu vakansiyaga rezyume qilibber
     if text:
@@ -788,8 +851,8 @@ async def process_telegram_update(update: Dict[str, Any], trigger_scan_callback=
         if lower_text in ["/scan", "tekshir", "qidir", "hamma vakansiyalar", "barcha vakansiyalar"] or \
            any(cmd in lower_text for cmd in ["vakansiyalarni tekshir", "ishlarni qidir", "yangi ishlarni tekshir", "hamma ishlarni ko'r"]):
             await send_telegram_message(
-                "🔎 <b>Qidiruv orqa fonda tezkor boshlandi...</b>\n"
-                "Barcha Telegram kanallar va HH.uz tekshirilmoqda. Barcha yangi e'lonlar birgalikda (batch) sun'iy intellekt orqali tahlil qilinadi. Mos vakansiyalar topilsa darhol xabar va ovozli xabar beraman!",
+                "🔎 <b>Bugungi yangi vakansiyalarni qidirish fonda boshlandi...</b>\n"
+                "Barcha Telegram kanallar va HH.uz tekshirilmoqda. Yangi e'lonlar sun'iy intellekt orqali tahlil qilinadi. Mos vakansiyalar topilsa darhol xabar va ovozli xabar beraman!",
                 chat_id=chat_id
             )
             if trigger_scan_callback:
@@ -802,13 +865,14 @@ async def process_telegram_update(update: Dict[str, Any], trigger_scan_callback=
             "⚠️ <b>Noma'lum buyruq!</b>\n\n"
             "Mavjud buyruqlar:\n"
             "• /start — Tizim imkoniyatlari\n"
-            "• /scan — Vakansiyalarni hoziroq qidirish\n"
+            "• /scan — Bugungi vakansiyalarni hoziroq qidirish\n"
             "• /status — Tizim va AI holati\n"
             "• /health — Server va servislar holati\n"
             "• /my_jobs — Topshirilgan ishlar tarixi\n"
             "• /channels — Kuzatilayotgan kanallar\n"
             "• /keywords — Qidiruv kalit so'zlari\n"
             "• /add_HR @username Kompaniya — HR kuzatuvga olish\n"
+            "• /hr_list — Kuzatuvdagi barcha HR lar\n"
             "• /call — Qo'ng'iroqni sinab ko'rish",
             chat_id=chat_id
         )
@@ -827,8 +891,11 @@ async def process_telegram_update(update: Dict[str, Any], trigger_scan_callback=
         ]
         wants_voice = is_voice_input or any(vt in lower_msg for vt in voice_triggers)
 
-        # Har doim bazadagi real so'nggi vakansiyalarni olamiz (yolg'on to'qishni oldini olish uchun)
-        vacancies = await ensure_real_vacancies(limit=5)
+        # Har doim bazadagi bugungi real vakansiyalarni olamiz (yolg'on to'qishni oldini olish uchun)
+        vacancies = get_today_vacancies(limit=5)
+        if not vacancies:
+            vacancies = await ensure_real_vacancies(limit=5)
+
         vacancies_context = ""
         if vacancies:
             vacancies_context_parts = []
@@ -892,7 +959,7 @@ async def process_telegram_update(update: Dict[str, Any], trigger_scan_callback=
             reply_markup = {
                 "inline_keyboard": [
                     [
-                        {"text": "📄 PDF Rezyume", "callback_data": f"pdf_resume_{vac_id}"},
+                        {"text": "📝 Matn + 📄 PDF Rezyume", "callback_data": f"resume_bundle_{vac_id}"},
                         {"text": "🎯 Suhbat savollari", "callback_data": f"interview_prep_{vac_id}"}
                     ],
                     [
