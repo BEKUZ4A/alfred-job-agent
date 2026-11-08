@@ -31,29 +31,22 @@ def is_call_allowed_now() -> bool:
     return is_allowed
 
 def format_posted_at(posted_at: str) -> str:
-    """
-    Vakansiya e'lon qilingan vaqtini o'qilishi oson ko'rinishda formatlash.
-    ISO format (UTC) → Toshkent vaqti (UTC+5): "06-11-2026 10:30"
-    HH.uz HTML scraping'dan kelgan oddiy matn bo'lsa, uni aynan qaytaradi.
-    """
+    """Vakansiya e'lon qilingan vaqtini Toshkent vaqtiga o'girish"""
     if not posted_at:
         return "Noma'lum"
     try:
-        # ISO format bo'lsa, Toshkent vaqtiga o'giramiz
         dt = datetime.fromisoformat(posted_at)
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
         dt_tash = dt.astimezone(TASHKENT_TZ)
         return dt_tash.strftime("%d-%m-%Y %H:%M")
     except (ValueError, TypeError):
-        # ISO format bo'lmasa (masalan, HH.uz HTML "1 soat oldin"), aynan qaytaramiz
         return posted_at if posted_at else "Noma'lum"
 
 async def make_call(text: str = "Sizga mos yangi vakansiya chiqdi", force: bool = False) -> bool:
     """
-    CallMeBot API orqali Telegramdan qo'ng'iroq qilish (faqat 8:00 dan 20:00 oralig'ida).
-    1. Agar CallMeBot FLOOD yoki xato qaytarsa, 10 soniya kutib 1 marta qayta urinsin (retry).
-    2. Qo'ng'iroq muvaffaqiyatiga qarab True yoki False qaytaradi.
+    CallMeBot API orqali Telegramdan qo'ng'iroq qilish.
+    Agar CallMeBot FLOOD yoki xato qaytarsa, 10 soniya kutib 1 marta qayta urinadi.
     """
     if not force and not is_call_allowed_now():
         logger.info("Qo'ng'iroq vaqti emas (8:00 dan 20:00 gacha ruxsat etilgan), qo'ng'iroq bekor qilindi.")
@@ -80,7 +73,6 @@ async def make_call(text: str = "Sizga mos yangi vakansiya chiqdi", force: bool 
                 if resp.status_code != 200:
                     return False, f"HTTP {resp.status_code}: {body[:150]}"
 
-                # CallMeBot FLOOD yoki server xatosi matnini tekshirish
                 if "flood" in lower_body or "too many users" in lower_body:
                     return False, f"FLOOD xatosi ({body[:150]})"
 
@@ -92,61 +84,56 @@ async def make_call(text: str = "Sizga mos yangi vakansiya chiqdi", force: bool 
             return False, f"Tarmoq/ulanish xatosi: {e}"
 
     try:
-        # 1-urinish
         logger.info(f"📞 CallMeBot orqali qo'ng'iroq qilinmoqda ({username})...")
         success, msg = await _execute_request()
         if success:
             logger.info(f"✅ CallMeBot qo'ng'irog'i muvaffaqiyatli amalga oshirildi: {msg}")
             return True
 
-        # 1. Agar CallMeBot FLOOD yoki xato qaytarsa, 10 soniya kutib 1 marta qayta urinsin (retry)
-        logger.warning(f"⚠️ CallMeBot xatolik berdi: {msg}. 10 soniya kutib qayta uriniladi (retry)...")
+        logger.warning(f"⚠️ 1-urinish o'tmadi: {msg}. 10 soniya kutib qayta urinamiz...")
         await asyncio.sleep(10)
 
-        # 2-urinish (retry)
-        logger.info("📞 CallMeBot qayta urinish (retry) amalga oshirilmoqda...")
-        success, msg = await _execute_request()
-        if success:
-            logger.info(f"✅ CallMeBot qayta urinishda muvaffaqiyatli amalga oshirildi: {msg}")
+        success2, msg2 = await _execute_request()
+        if success2:
+            logger.info(f"✅ 2-urinishda CallMeBot qo'ng'irog'i muvaffaqiyatli o'tdi: {msg2}")
             return True
         else:
-            logger.error(f"❌ CallMeBot 2-urinishda ham muvaffaqiyatsiz bo'ldi: {msg}")
+            logger.error(f"❌ 2-urinishda ham qo'ng'iroq o'tmadi: {msg2}")
             return False
     except Exception as e:
         logger.error(f"make_call da kutilmagan xatolik: {e}")
         return False
 
-# Orqaga moslik (backward compatibility) uchun
-send_callmebot_call = make_call
-
-async def send_telegram_message(text: str, chat_id: str = "", reply_markup: Optional[Dict[str, Any]] = None) -> bool:
-    """Telegram bot orqali matnli xabar va ixtiyoriy inline tugmalar (reply_markup) yuborish. Uzun xabarlarni bo'laklab xatosiz yuboradi."""
+async def send_telegram_message(text: str, reply_markup: Optional[Dict] = None, chat_id: str = "") -> bool:
+    """Telegram bot orqali matnli xabar yuborish (uzun matnlarni 3900 belgidan bo'laklab yuboradi)"""
     target_chat_id = chat_id or TELEGRAM_CHAT_ID
     if not TELEGRAM_BOT_TOKEN or not target_chat_id:
         logger.warning("Telegram Bot Token yoki Chat ID sozlanmagan!")
         return False
         
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-
-    # Telegram 4096 belgi chegarasi: uzun xabarlarni bo'laklab yuborish
+    
+    max_chunk = 3900
     chunks = []
-    if len(text) > 3900:
-        current_chunk = ""
-        for line in text.split("\n"):
-            if len(current_chunk) + len(line) + 1 > 3800:
-                chunks.append(current_chunk)
-                current_chunk = line + "\n"
-            else:
-                current_chunk += line + "\n"
-        if current_chunk:
-            chunks.append(current_chunk)
-    else:
+    if len(text) <= max_chunk:
         chunks = [text]
+    else:
+        lines = text.split("\n")
+        cur_chunk = ""
+        for line in lines:
+            if len(cur_chunk) + len(line) + 1 <= max_chunk:
+                cur_chunk += ("\n" if cur_chunk else "") + line
+            else:
+                if cur_chunk:
+                    chunks.append(cur_chunk)
+                cur_chunk = line
+        if cur_chunk:
+            chunks.append(cur_chunk)
 
     success = True
-    async with httpx.AsyncClient(timeout=20) as client:
-        for i, chunk in enumerate(chunks):
-            chunk_markup = reply_markup if i == len(chunks) - 1 else None
+    async with httpx.AsyncClient(timeout=25) as client:
+        for idx, chunk in enumerate(chunks):
+            chunk_markup = reply_markup if idx == len(chunks) - 1 else None
             payload = {
                 "chat_id": target_chat_id,
                 "text": chunk,
@@ -159,14 +146,13 @@ async def send_telegram_message(text: str, chat_id: str = "", reply_markup: Opti
             try:
                 resp = await client.post(url, json=payload)
                 if resp.status_code != 200:
-                    # Agar HTML teglarida xatolik bo'lsa, parse_mode siz oddiy matn qilib qayta urinish
                     payload.pop("parse_mode", None)
                     resp_retry = await client.post(url, json=payload)
                     if resp_retry.status_code != 200:
-                        logger.warning(f"Telegram xabar yuborishda HTTP {resp_retry.status_code}: {resp_retry.text[:200]}")
+                        logger.warning(f"Telegram sendMessage HTTP {resp_retry.status_code}: {resp_retry.text[:200]}")
                         success = False
             except Exception as e:
-                logger.error(f"Telegram chunk xabar yuborishda xato: {e}")
+                logger.error(f"Telegram chunk yuborishda xato: {e}")
                 success = False
 
     return success
@@ -175,22 +161,14 @@ async def send_telegram_voice(file_path: str, caption: str = "", chat_id: str = 
     """Telegram bot orqali ovozli xabar (voice/audio) yuborish"""
     target_chat_id = chat_id or TELEGRAM_CHAT_ID
     if not TELEGRAM_BOT_TOKEN or not target_chat_id:
-        logger.warning("Telegram Bot Token yoki Chat ID sozlanmagan!")
         return False
         
     if not os.path.exists(file_path):
-        logger.error(f"Audio fayl topilmadi: {file_path}")
         return False
         
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendVoice"
     
-    # Audio MIME turini aniqlash
-    if file_path.endswith(".ogg"):
-        mime_type = "audio/ogg"
-    elif file_path.endswith(".wav"):
-        mime_type = "audio/wav"
-    else:
-        mime_type = "audio/mpeg"
+    mime_type = "audio/ogg" if file_path.endswith(".ogg") else ("audio/wav" if file_path.endswith(".wav") else "audio/mpeg")
 
     try:
         async with httpx.AsyncClient(timeout=35) as client:
@@ -204,20 +182,49 @@ async def send_telegram_voice(file_path: str, caption: str = "", chat_id: str = 
                 resp = await client.post(url, data=data, files=files)
                 if resp.status_code == 200:
                     return True
-                else:
-                    logger.warning(f"sendVoice HTTP {resp.status_code}: {resp.text[:120]}, sendAudio bilan urinilmoqda...")
 
-            # Agar sendVoice qabul qilmasa (masalan, WAV format bo'lsa), sendAudio orqali yuborish
+            # sendAudio orqali zaxira
             audio_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendAudio"
             with open(file_path, "rb") as f2:
                 a_files = {"audio": (os.path.basename(file_path), f2, mime_type)}
                 a_resp = await client.post(audio_url, data=data, files=a_files)
                 return a_resp.status_code == 200
     except Exception as e:
-        logger.error(f"Telegram audio yuborishda xatolik: {e}")
+        logger.error(f"Telegram voice yuborishda xato: {e}")
         return False
     finally:
-        # Temp faylni xavfsiz tozalash
+        try:
+            if os.path.exists(file_path):
+                os.remove(file_path)
+        except Exception:
+            pass
+
+async def send_telegram_document(file_path: str, caption: str = "", chat_id: str = "") -> bool:
+    """Telegram bot orqali hujjat (PDF Rezyume) yuborish"""
+    target_chat_id = chat_id or TELEGRAM_CHAT_ID
+    if not TELEGRAM_BOT_TOKEN or not target_chat_id:
+        return False
+
+    if not os.path.exists(file_path):
+        logger.error(f"Hujjat fayli topilmadi: {file_path}")
+        return False
+
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendDocument"
+    try:
+        async with httpx.AsyncClient(timeout=40) as client:
+            with open(file_path, "rb") as f:
+                files = {"document": (os.path.basename(file_path), f, "application/pdf")}
+                data = {
+                    "chat_id": target_chat_id,
+                    "caption": caption[:1024],
+                    "parse_mode": "HTML"
+                }
+                resp = await client.post(url, data=data, files=files)
+                return resp.status_code == 200
+    except Exception as e:
+        logger.error(f"Telegram document yuborishda xato: {e}")
+        return False
+    finally:
         try:
             if os.path.exists(file_path):
                 os.remove(file_path)
@@ -225,10 +232,7 @@ async def send_telegram_voice(file_path: str, caption: str = "", chat_id: str = 
             pass
 
 def format_vacancy_card(item: Dict[str, Any], rank: int = 0) -> str:
-    """
-    Vakansiya yoki Frilans buyurtma ma'lumotlarini chiroyli HTML formatga keltirish.
-    [🏢 VAKANSIYA] yoki [💰 FRILANS BUYURTMA] va [HH.UZ], [OLX.UZ], [TELEGRAM] belgilari bilan.
-    """
+    """Vakansiya yoki Frilans buyurtma kartochkasi"""
     analysis = item.get("analysis", {})
     score = analysis.get("match_score", 0)
     title = analysis.get("role_title") or item.get("title")
@@ -240,15 +244,14 @@ def format_vacancy_card(item: Dict[str, Any], rank: int = 0) -> str:
     url = item.get("url", "#")
     source = item.get("source", "Internet")
     tech_stack = ", ".join(analysis.get("tech_stack", [])) or "Python"
+    red_flag = analysis.get("red_flag") or item.get("red_flag", "")
 
-    # E'lon turi: [🏢 VAKANSIYA] yoki [💰 FRILANS BUYURTMA]
     job_type = analysis.get("job_type") or item.get("job_type", "vacancy")
     if "freelance" in str(job_type).lower() or "frilans" in str(job_type).lower() or "buyurtma" in str(job_type).lower():
         type_badge = "💰 <b>[FRILANS BUYURTMA]</b>"
     else:
         type_badge = "🏢 <b>[VAKANSIYA]</b>"
 
-    # Manba nishoni: [HH.UZ], [OLX.UZ], [TELEGRAM]
     src_lower = str(source).lower()
     if "hh" in src_lower:
         source_badge = "<b>[HH.UZ]</b>"
@@ -257,11 +260,8 @@ def format_vacancy_card(item: Dict[str, Any], rank: int = 0) -> str:
     else:
         source_badge = f"<b>[TELEGRAM {source}]</b>" if source.startswith("@") else "<b>[TELEGRAM]</b>"
 
-    # E'lon qilingan vaqtni formatlash
-    posted_at_raw = item.get("posted_at", "")
-    posted_at_formatted = format_posted_at(posted_at_raw)
+    posted_at_formatted = format_posted_at(item.get("posted_at", ""))
 
-    # Rank belgisi (1-chi eng mos)
     rank_emoji = ""
     if rank == 1:
         rank_emoji = "🥇 "
@@ -270,7 +270,12 @@ def format_vacancy_card(item: Dict[str, Any], rank: int = 0) -> str:
     elif rank == 3:
         rank_emoji = "🥉 "
 
+    red_flag_alert = ""
+    if red_flag:
+        red_flag_alert = f"⚠️ <b>Ehtiyot bo'ling (Shubhali e'lon):</b> <i>{red_flag}</i>\n\n"
+
     card = (
+        f"{red_flag_alert}"
         f"{rank_emoji}{type_badge} {source_badge} (Moslik: <b>{score}%</b>)\n\n"
         f"📌 <b>Nomi:</b> {title}\n"
         f"🏢 <b>Buyurtmachi/Kompaniya:</b> {company}\n"
@@ -285,25 +290,13 @@ def format_vacancy_card(item: Dict[str, Any], rank: int = 0) -> str:
     return card
 
 async def notify_user_about_vacancies(matches: List[Dict[str, Any]]):
-    """
-    Topilgan mos vakansiyalar bo'yicha foydalanuvchini ogohlantirish:
-    1. Maksimal 10 ta eng yaxshi vakansiya tanlab olinadi.
-    2. Eng yuqori ball to'plagan 1 ta eng mos vakansiya ovozli xabarga aylantiriladi.
-    3. CallMeBot orqali qo'ng'iroq qilinadi (make_call: 10s retry bilan).
-       Agar qo'ng'iroq baribir o'tmasa, dastur to'xtab qolmasdan Telegram orqali ogohlantirish yuboriladi:
-       "🚨 DIQQAT: Yangi vakansiya topildi, lekin qo'ng'iroq liniyasi bandligi sababli xabar yuborildi!"
-    4. Frilans buyurtmalar uchun '📨 Rezyume / Taklif yuborish' inline tugmasi taqdim etiladi.
-    """
+    """Topilgan mos vakansiyalar bo'yicha bildirishnoma yuborish"""
     if not matches:
         return
         
-    # Ball bo'yicha saralash (eng yuqori ball birinchi)
     matches.sort(key=lambda x: x.get("analysis", {}).get("match_score", 0), reverse=True)
-    
-    # Maksimal 10 ta yangi vakansiya bilan cheklash
     top_matches = matches[:MAX_MATCHES_PER_SCAN]
     
-    # 1 TA ENG MOS VAKANSIYA
     top_vacancy = top_matches[0]
     top_analysis = top_vacancy.get("analysis", {})
     top_title = top_analysis.get("role_title", "Python Dasturchi")
@@ -317,27 +310,17 @@ async def notify_user_about_vacancies(matches: List[Dict[str, Any]]):
         f"Barcha batafsil ma'lumotlarni Telegram chatimizda qoldirdim, bemalol ko'rib chiqishingiz mumkin."
     )
     
-    # 1. Qo'ng'iroq qilish (make_call: faqat 8:00 - 20:00 oralig'ida)
-    call_success = False
-    call_attempted = is_call_allowed_now() and bool(CALLMEBOT_USERNAME)
-    if call_attempted:
+    # Agar 80%+ mos bo'lsa: shoshilinch signal yoki qo'ng'iroq
+    if top_score >= 80:
         try:
-            call_success = await make_call(text=f"Sizga mos yangi {top_title} vakansiyasi chiqdi! Moslik: {top_score}%")
-        except Exception as e:
-            logger.error(f"make_call chaqirishda xatolik: {e}")
-            call_success = False
-
-    # 2. Agar qo'ng'iroq baribir o'tmasa, dastur to'xtab qolmasin — darhol Telegram bot orqali ogohlantirish yuborish
-    if call_attempted and not call_success:
-        try:
-            logger.warning("Qo'ng'iroq o'tmadi (liniya band / FLOOD). Telegram orqali ogohlantirish yuborilmoqda...")
-            await send_telegram_message(
-                "🚨 <b>DIQQAT: Yangi vakansiya topildi, lekin qo'ng'iroq liniyasi bandligi sababli xabar yuborildi!</b>"
+            from userbot import trigger_urgent_call_or_alert
+            await trigger_urgent_call_or_alert(
+                reason=f"80%+ mos vakansiya topildi: {top_title} ({top_company}) - {top_score}% moslik!"
             )
-        except Exception as e:
-            logger.error(f"Ogohlantirish matnini yuborishda xatolik: {e}")
-    
-    # 3. Eng mos 1 ta vakansiya uchun o'zbekcha ovozli xabar
+        except Exception:
+            pass
+
+    # Eng mos 1 ta vakansiya uchun o'zbekcha ovozli xabar
     try:
         voice_file = await generate_voice_message(voice_text)
         if voice_file:
@@ -348,31 +331,63 @@ async def notify_user_about_vacancies(matches: List[Dict[str, Any]]):
             )
             await send_telegram_voice(voice_file, caption=caption)
     except Exception as e:
-        logger.error(f"Telegram ovozli xabar yuborishda xatolik: {e}")
+        logger.error(f"Telegram ovozli xabar yuborishda xato: {e}")
         
-    # 4. Barcha qolgan (10 tagacha) mos vakansiyalarni matnli ko'rinishda yuborish
+    # Vakansiyalarni tugmalari bilan yuborish
     for i, vac in enumerate(top_matches, start=1):
         try:
             text_message = format_vacancy_card(vac, rank=i)
-            
-            # Agar Frilans buyurtma bo'lsa, '📨 Rezyume / Taklif yuborish' tugmasini qo'shamiz
-            vac_analysis = vac.get("analysis", {})
-            job_type = vac_analysis.get("job_type") or vac.get("job_type", "vacancy")
-            is_freelance = "freelance" in str(job_type).lower() or "frilans" in str(job_type).lower() or "buyurtma" in str(job_type).lower()
-            
-            reply_markup = None
-            if is_freelance:
-                reply_markup = {
-                    "inline_keyboard": [
-                        [
-                            {
-                                "text": "📨 Rezyume / Taklif yuborish",
-                                "callback_data": f"pitch:{vac['id']}"
-                            }
-                        ]
+            vac_id = str(vac["id"])
+            vac_url = vac.get("url", "https://t.me")
+
+            # Inline tugmalar:
+            # 1-qator: 📄 PDF Rezyume | 🎯 Suhbat savollari
+            # 2-qator: ✅ Topshirdim | 🔗 E'lonni ochish
+            reply_markup = {
+                "inline_keyboard": [
+                    [
+                        {"text": "📄 PDF Rezyume", "callback_data": f"pdf_resume_{vac_id}"},
+                        {"text": "🎯 Suhbat savollari", "callback_data": f"interview_prep_{vac_id}"}
+                    ],
+                    [
+                        {"text": "✅ Topshirdim", "callback_data": f"applied_{vac_id}"},
+                        {"text": "🔗 E'lonni ochish", "url": vac_url}
                     ]
-                }
+                ]
+            }
                 
             await send_telegram_message(text_message, reply_markup=reply_markup)
         except Exception as e:
-            logger.error(f"Telegram matn yuborishda xatolik: {e}")
+            logger.error(f"Telegram matn yuborishda xato: {e}")
+
+async def send_hr_alert_to_bot(hr_username: str, company: str, original_msg: str, ai_summary: str, suggested_reply: str):
+    """HR xabar yozganda botga batafsil ma'lumot va ovozli xabarni chiqarish"""
+    company_text = f" ({company})" if company else ""
+    text = (
+        f"🚨 <b>KUZATUVDAGI HR JAVOB YOZDI!</b>\n\n"
+        f"👤 <b>HR:</b> @{hr_username}{company_text}\n"
+        f"💬 <b>Xabar:</b>\n<i>\"{original_msg}\"</i>\n\n"
+        f"💡 <b>AI Xulosa:</b>\n{ai_summary}\n\n"
+        f"📝 <b>Tavsiya etilgan javob varianti:</b>\n"
+        f"<code>{suggested_reply}</code>"
+    )
+
+    reply_markup = {
+        "inline_keyboard": [
+            [
+                {"text": "✅ Javobni yuborish (Telegramdan)", "callback_data": f"send_hr_reply_{hr_username}"}
+            ]
+        ]
+    }
+
+    await send_telegram_message(text, reply_markup=reply_markup)
+
+    # ElevenLabs orqali qisqa ovozli xabar
+    try:
+        from voice import generate_elevenlabs_tts
+        voice_text = f"Assalomu alaykum Behruzbek! Kuzatuvdagi HR {hr_username} sizga javob yozdi. {ai_summary}"
+        voice_file = await generate_elevenlabs_tts(voice_text)
+        if voice_file:
+            await send_telegram_voice(voice_file, caption=f"🎙 HR @{hr_username} xabari xulosasi")
+    except Exception as e:
+        logger.warning(f"HR ovozli xabarida xatolik: {e}")

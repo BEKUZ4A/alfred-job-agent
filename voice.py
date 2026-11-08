@@ -176,7 +176,9 @@ async def generate_elevenlabs_tts(clean_text: str) -> Optional[str]:
     def _sync_generate():
         try:
             from elevenlabs.client import ElevenLabs
+            from elevenlabs import VoiceSettings
             client = ElevenLabs(api_key=ELEVENLABS_API_KEY)
+            settings = VoiceSettings(stability=0.55, similarity_boost=0.80)
 
             pcm_bytes = None
             try:
@@ -184,6 +186,7 @@ async def generate_elevenlabs_tts(clean_text: str) -> Optional[str]:
                     voice_id=voice_id,
                     text=phonetic_text,
                     model_id=model_id,
+                    voice_settings=settings,
                     output_format="pcm_24000"
                 )
                 pcm_bytes = b"".join(audio_stream)
@@ -200,6 +203,7 @@ async def generate_elevenlabs_tts(clean_text: str) -> Optional[str]:
                             voice_id="JBFqnCBsd6RMkjVDRZzb",  # George premade ovozi
                             text=phonetic_text,
                             model_id=model_id,
+                            voice_settings=settings,
                             output_format="pcm_24000"
                         )
                         pcm_bytes = b"".join(audio_stream)

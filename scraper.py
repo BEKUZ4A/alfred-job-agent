@@ -104,6 +104,14 @@ def is_potentially_relevant(text: str) -> bool:
         "sayt", "сайт", "web dasturchi"
     ]
     has_tech = any(k in t for k in python_keywords)
+    if not has_tech:
+        try:
+            from database import get_managed_keywords
+            custom_kws = get_managed_keywords()
+            if any(k in t for k in custom_kws):
+                has_tech = True
+        except Exception:
+            pass
     
     if "lead" in t and "junior" not in t and "intern" not in t:
         return False
@@ -382,8 +390,15 @@ async def scrape_all_sources() -> List[Dict]:
     # 2. OLX.UZ
     tasks.append(scrape_olx_uz())
     
-    # 3. 9 ta Telegram kanal
-    for ch in TELEGRAM_CHANNELS:
+    # 3. Telegram kanallar (Standart 9 ta + Foydalanuvchi qo'shgan shaxsiy kanallar)
+    try:
+        from database import get_managed_channels
+        managed_ch = get_managed_channels()
+    except Exception:
+        managed_ch = []
+
+    all_channels = list(dict.fromkeys(TELEGRAM_CHANNELS + managed_ch))
+    for ch in all_channels:
         tasks.append(scrape_telegram_channel(ch, today_only=True))
         
     logger.info(f"🚀 Barcha {len(tasks)} ta manba bo'yicha parallel skanerlash boshlandi...")

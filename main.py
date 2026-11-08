@@ -12,6 +12,8 @@ from scraper import scrape_all_sources, is_potentially_relevant
 from ai_analyzer import batch_analyze_vacancies, get_last_error
 from notifier import notify_user_about_vacancies
 from bot_handler import process_telegram_update, run_telegram_polling
+from userbot import start_userbot
+from scheduler import run_hr_reminder_loop
 
 # Log sozlamalari
 logging.basicConfig(
@@ -140,12 +142,20 @@ async def lifespan(app: FastAPI):
     
     # 2. Orqa fonda avtomatik qidiruv taymerini yoqish
     timer_task = asyncio.create_task(background_scheduler())
+
+    # 3. Telethon Shaxsiy Userbot'ni ishga tushirish (HR lichka xabarlarini kuzatish)
+    userbot_task = asyncio.create_task(start_userbot())
+
+    # 4. HR larni 3 kunlik eslatma va 7 kunlik tozalash kuzatuvchisini yoqish
+    hr_task = asyncio.create_task(run_hr_reminder_loop())
     
     yield
     
     # Dastur to'xtaganda vazifalarni to'xtatish
     bot_task.cancel()
     timer_task.cancel()
+    userbot_task.cancel()
+    hr_task.cancel()
     logger.info("Alfred AI Agent to'xtatildi.")
 
 app = FastAPI(

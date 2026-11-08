@@ -1,134 +1,81 @@
-# 🤖 Alfred — 24/7 AI IT-Vakansiya Agenti
+# 🤖 Alfred — 24/7 AI IT-Vakansiya va Karyera Agenti
 
-Assalomu alaykum! Ushbu loyiha siz uchun **kompyuteringiz o'chiq turganda ham** internetdan eng mos Python, Django, FastAPI, AI Agent vakansiyalarini topib, Telegramingizga yuborib turadi.
-
----
-
-## 🎯 Alfred nima qila oladi?
-1. **O'zbekistondagi barcha nufuzli manbalarni 24/7 parallel kuzatadi:**
-   - 📱 **9 ta Telegram kanal:** `@joblinkuz`, `@rizqimuz`, `@ish_kerak_toshkent_bormi_ishlar`, `@jobforjunior`, `@freelance_uzb`, `@young_june`, `@young_intern`, `@UstozShogird`, `@it_jobs_uz`
-   - 🌐 **HH.UZ:** Rasmiy API orqali O'zbekiston bo'yicha so'nggi 24 soatlik yangi Python/AI/Backend vakansiyalari
-   - 📦 **OLX.UZ:** Ichki API orqali bir martalik frilans buyurtmalar va loyihalar (Cloudflare aylanib o'tish bilan)
-2. **Gemini AI orqali aqlli tahlil va filtr:**
-   - Ish beruvchilar va buyurtmachilarni dasturchilarning reklamasidan ("Bot yasab beramiz", "sotiladi") ajratadi.
-   - Har bir e'lonni `[🏢 VAKANSIYA]` yoki `[💰 FRILANS BUYURTMA]` deb toifalarga ajratadi.
-   - Har bir ishni sizning profilingizga (Junior / Intern / Freelance / Python / AI) mosligini 0-100% oraliqda tekshiradi.
-3. **Sizga xabar beradi:**
-   - 📞 **Qo'ng'iroq qiladi (FLOOD va Retry himoyasi bilan):** CallMeBot orqali Telegramingizga qo'ng'iroq chaqiradi. Agar server band bo'lsa, 10 soniya kutib qayta urinadi.
-   - 🎙 **Tabiiy Ovozli xabar yuboradi (ElevenLabs Multilingual V2 + Edge-TTS):**
-     - **Asosiy ovoz:** ElevenLabs API (`eleven_multilingual_v2`), Ovoz ID: `cfWx14ZbaEUT4BjIA5tH`, toza Telegram Voice (`.ogg` Opus) formatida.
-     - **Fonetik transkripsiya:** Texnologiyalar nomini to'g'ri o'qish (Python -> Payton, Django -> Jango, FastAPI -> Fast Ey-Pi-Ay, PostgreSQL -> Postgres Kyu-El va b.).
-     - **Zaxira ovoz:** Agar ElevenLabs balansi tugasa yoki xato bo'lsa -> Edge-TTS (`uz-UZ-SardorNeural`, `rate="+8%"`, `pitch="-2Hz"`).
-     - **Do'stona so'zlashuv nutqi:** Ovoz chiqarishdan oldin Gemini 3-4 gapdan iborat samimiy nutq tayyorlaydi (*"Assalomu alaykum Behruzbek!..."*), hech qanday yulduzcha, chiziqcha, havola yoki emoji nomlari o'qilmaydi!
-   - 📩 **Chiroyli format:** `[🏢 VAKANSIYA]` / `[💰 FRILANS BUYURTMA]` va `[HH.UZ]`, `[OLX.UZ]`, `[TELEGRAM]` belgilari bilan to'liq ma'lumotlarni yuboradi.
-4. **Ovozli boshqaruv va Frilans Taklif generatori:**
-   - 🎙 **Ovozli xabarni eshitish:** Botga ovozli xabar yuborsangiz, Gemini AI orqali uni eshitib tushunadi va buyruqni bajaradi.
-   - 🏢 **Guruh nomi bo'yicha qidiruv:** Istalgan guruh nomini @ siz aytsangiz ham qidiradi (*"JobLink"*, *"Ustoz Shogird"*, *"Freelance"*).
-   - 📨 **"Rezyume / Taklif yuborish" tugmasi:** Frilans buyurtma kelganda, shu tugmani bosish bilan Gemini mijozga yuborish uchun professional tijoriy taklif (Pitch/Cover Letter + GitHub: BEKUZ4A) yozib beradi!
-5. **Aniq Telegram Post Ssilkasi orqali Maxsus Rezyume va Cover Letter:**
-   - Botga aniq post ssilkasi (masalan: `https://t.me/UstozShogird/45810`) yuborilganda, butun kanalni skaner qilmasdan, to'g'ridan-to'g'ri o'sha post matnini yuklab oladi.
-   - Nomzodning haqiqiy profili (Behruzbek Bohodirov, Python/Django/FastAPI/AI, Risk Radar, Uzum AI Shop, Alfred loyihalari, sertifikatlar) asosida ushbu ishga moslashtirilgan tayyor **Rezyume (CV)**, Telegram **Cover Letter** va e'londagi **HR kontaktini** chiqarib beradi!
+Assalomu alaykum! Ushbu loyiha siz uchun **kompyuteringiz o'chiq turganda ham** internetdan eng mos Python, Django, FastAPI, AI Agent vakansiyalarini topib, Telegramingizga yetkazadi, HR lar bilan muloqotni nazorat qiladi va avtonom tarzda sizga professional yordam beradi.
 
 ---
 
-## 👶 5 yoshli bolaga tushuntirgandek: Qadam-baqadam yo'riqnoma
+## 🎯 Alfredning 10 ta Asosiy Tizimi
 
-Hech qanday dasturlash kodini o'zgartirishingiz shart emas. Hammasi tayyor. Faqat quyidagi 5 ta qadamni bajaring:
+1. **📱 Shaxsiy Telegram Userbot va Shoshilinch Audio Qo'ng'iroq (Telethon):**
+   - Telegram MTProto orqali shaxsiy hisobingizga (`@BBCnew_2026`) ulanadi.
+   - 80%+ mos vakansiya chiqqanda yoki HR muhim xabar yozganda zudlik bilan qo'ng'iroq / baland signallar orqali ogohlantiradi.
 
----
+2. **🗓 HR Qo'shish va Google Calendar Integratsiyasi (`/add_HR`):**
+   - `/add_HR @username [Kompaniya]` buyrug'i orqali HR ni kuzatuvga olish.
+   - Google Calendar'ga avtomatik 2 ta tadbir:
+     - 3 kundan keyin: *HR ga eslatma (follow-up) yozish*
+     - 7 kundan keyin: *Javob bermasa tozalash*
+   - Agar HR lichkangizga yozsa: tadbirlar avtomatik bekor qilinadi!
 
-### 1-QADAM: Telegram Bot ochish va Chat ID olish (2 daqiqa)
+3. **🗑 HR va Chatni O'chirish (Kalendar + Telegram Lichka):**
+   - Agar HR 7 kun ichida javob bermasa: bot so'rov yuboradi.
+   - `[🗑 Ha, Kalendar va Telegramdan o'chir]` bosilsa: Google Calendar tadbirlari o'chiriladi va Telethon orqali shaxsiy Telegram lichkangizdagi yozishma ikkala tomon uchun ham butunlay tozalab tashlanadi (`revoke=True`).
 
-1. Telegramda **[@BotFather](https://t.me/BotFather)** ni qidiring va kiring.
-2. `/newbot` deb yozing.
-3. Botingizga ism bering (masalan: `Mening Alfred Agentim`).
-4. Botingizga username bering (oxiri `bot` bilan tugashi shart, masalan: `alfred_behruz_job_bot`).
-5. BotFather sizga **HTTP API Token** beradi. (Masalan: `7891234567:AAHq_ABC...`). Shuni nusxalab oling.
-6. Endi Telegramda **[@userinfobot](https://t.me/userinfobot)** ga kiring va `/start` bosing.
-   - U sizga **Id: 123456789** degan raqam beradi. Bu sizning `TELEGRAM_CHAT_ID`ingiz.
-7. O'zingiz ochgan botga kirib, bir marta **/start** tugmasini bosib qo'ying!
+4. **⚡ HR Yozsa — AI Tahlil va Javob Varianti:**
+   - Kuzatuvdagi HR yozishi bilan Gemini xabarni tahlil qiladi.
+   - Muhim taklif bo'lsa darhol signal beradi, botga esa xulosa, ElevenLabs ovozi va `[✅ Javobni yuborish]` tugmasini chiqaradi.
 
----
+5. **🎙 ElevenLabs Aniq Ovoz (`GChwNsPvTsqD6tAAORVU`):**
+   - Model: `eleven_multilingual_v2`, `stability=0.55`, `similarity_boost=0.80`.
+   - Texnologiyalar nomini aniq fonetik transkripsiya bilan ravon o'qiydi (Python -> Payton, Django -> Jango, FastAPI -> Fast Ey-Pi-Ay).
+   - Chiqish: Telegram Voice (`.ogg` Opus).
 
-### 2-QADAM (Ixtiyoriy): CallMeBot orqali qo'ng'iroqni ulash (1 daqiqa)
+6. **📄 Avto-PDF Rezyume Generatori (`reportlab`):**
+   - Vakansiya ostidagi `[📄 PDF Rezyume]` bosilganda yoki `t.me/kanal/post_id` yuborilganda:
+   - Behruzbek Bohodirovning tajribasi, loyihalari (Risk Radar, Uzum AI Shop, Alfred, Earth Weather, Konstitutsiya) va sertifikatlari (Codify Tech CID-2026-000026, Turon Hackathon) asosida aynan shu vakansiyaga moslashtirilgan chiroyli `Behruzbek_Bohodirov_CV.pdf` faylini generatsiya qilib beradi.
 
-Agar yangi ish chiqqanda Telegramingizga qo'ng'iroq kelishini xohlasangiz:
-1. Telegramda **[@CallMeBot_Call_Bot](https://t.me/CallMeBot_Call_Bot)** ni oching.
-2. Unga `/start` bosing va ruxsat bering.
-3. Sizning Telegram username'ingiz (masalan: `@behruz_dev`) kerak bo'ladi.
+7. **🎯 Suhbatga 5 Daqiqada Tayyorlash (`🎯 Suhbat savollari`):**
+   - Vakansiya ostidagi tugma orqali aynan shu ishda so'raladigan 7 ta eng muhim texnik savol va sodda, professional javob variantlarini chiqarib beradi.
 
----
+8. **💾 O'chmaydigan Bulutli Xotira (PostgreSQL / SQLite):**
+   - Render qayta yonganda ma'lumotlar yo'qolmasligi uchun `DATABASE_URL` orqali PostgreSQL (Neon.tech / Supabase) ga ulanadi. Agar ko'rsatilmasa, mahalliy SQLite'da ishlaydi.
 
-### 3-QADAM: Kodni GitHub'ga yuklash (3 daqiqa)
+9. **📢 Telegramdan Kanallar va Kalit So'zlarni Boshqarish:**
+   - `/channels` — Kuzatilayotgan barcha kanallar ro'yxati.
+   - `/add_channel <kanal>` va `/remove_channel <kanal>` — Kanal qo'shish va o'chirish.
+   - `/keywords` — Qidiruv kalit so'zlari.
+   - `/add_keyword <so'z>` va `/remove_keyword <so'z>` — Kalit so'z boshqaruvi.
 
-1. **[GitHub.com](https://github.com)** ga kiring (akkauntingiz bo'lmasa, bepul ro'yxatdan o'ting).
-2. Yuqori o'ng burchakdagi **"+"** tugmasini bosib, **"New repository"** ni tanlang.
-3. Repository name ga: `alfred-job-agent` deb yozing.
-4. **"Public"** qilib qoldiring va pastdagi yashil **"Create repository"** tugmasini bosing.
-5. Kompyuteringizda ushbu `Vakansiya_qidiruvchi` papkasidagi fayllarni GitHub'ga yuklang:
-   - Kompyuteringiz terminalida (PowerShell):
-     ```bash
-     cd c:\Users\behru\Downloads\Vakansiya_qidiruvchi
-     git init
-     git add .
-     git commit -m "Alfred AI Vakansiya Agenti"
-     git branch -M main
-     git remote add origin https://github.com/SIZNING_GITHUB_USERNAME/alfred-job-agent.git
-     git push -u origin main
-     ```
-   *(Yoki GitHub saytida to'g'ridan-to'g'ri "uploading an existing file" tugmasi orqali barcha fayllarni sudrab tashlashingiz ham mumkin).*
-
----
-
-### 4-QADAM: Render.com ga 24/7 Bepul Server sifatida ulash (3 daqiqa)
-
-1. **[Render.com](https://dashboard.render.com)** saytiga kiring va GitHub akkauntingiz orqali kiring (Sign in with GitHub).
-2. **"New +"** tugmasini bosing va **"Web Service"** ni tanlang.
-3. GitHub ro'yxatidan hozirgina ochgan **`alfred-job-agent`** reponi tanlang va **"Connect"** bosing.
-4. Quyidagi sozlamalarni tekshiring:
-   - **Name:** `alfred-job-agent`
-   - **Runtime:** `Python 3`
-   - **Build Command:** `pip install -r requirements.txt`
-   - **Start Command:** `uvicorn main:app --host 0.0.0.0 --port $PORT`
-   - **Instance Type:** `Free` (bepul)
-5. Pastroqqa tushib, **"Environment Variables"** (Maxfiy kalitlar) bo'limiga kiring va quyidagilarni qo'shing:
-   - `ELEVENLABS_API_KEY`: `sk_d770ede4c9647d52c5c4282b536d6e62b86ef156e3a54a93` *(ElevenLabs API kalitingiz)*
-   - `ELEVENLABS_VOICE_ID`: `cfWx14ZbaEUT4BjIA5tH` *(Tanlangan ovoz ID)*
-   - `GEMINI_API_KEY`: *(Google AI Studio API kalitingiz)*
-   - `TELEGRAM_BOT_TOKEN`: *(1-qadamda BotFather bergan token)*
-   - `TELEGRAM_CHAT_ID`: *(1-qadamda userinfobot bergan raqam)*
-   - `CALLMEBOT_USERNAME`: *(Telegram usernameingiz, masalan `@behruz_dev`)*
-   - `MIN_MATCH_SCORE`: `65`
-6. Eng pastdagi **"Deploy Web Service"** tugmasini bosing!
-7. 2-3 daqiqada Render sizga bepul havola beradi (masalan: `https://alfred-job-agent.onrender.com`).
+10. **🛡 Soxta Vakansiyalar Filtr (Red-Flag) va Mini-CRM:**
+    - "3 oy bepul stajirovka", "kurs sotish" kabi shubhali e'lonlarni `⚠️ Ehtiyot bo'ling (Shubhali e'lon)` deb belgilaydi.
+    - `[✅ Topshirdim]` tugmasi va `/my_jobs` buyrug'i orqali arizalaringiz tarixini nazorat qilib borasiz.
 
 ---
 
-### 5-QADAM: cron-job.org orqali 24/7 uyg'oq tutish (2 daqiqa)
+## 🛠 Telegram Bot Buyruqlari
 
-Render.com bepul serverlari 15 daqiqa murojaat bo'lmasa "uxlab" qoladi. Buning oldini olish va har 5 daqiqada avtomatik qidiruvni ishga tushirish uchun:
-
-1. **[cron-job.org](https://cron-job.org)** saytiga kiring (bepul ro'yxatdan o'ting).
-2. **"CREATE CRONJOB"** tugmasini bosing.
-3. Sozlamalarni to'ldiring:
-   - **Title:** `Alfred Har 5 daqiqada skaner`
-   - **URL:** `https://alfred-job-agent.onrender.com/scan` *(o'zingizning Render havolangiz)*
-   - **Execution schedule:** `Every 5 minutes` (har 5 daqiqada)
-4. **"CREATE"** tugmasini bosing!
-
-🎉 **BO'LDI!** Endi kompyuteringizni o'chirib qo'ysangiz ham, bulutdagi serveringiz har 5 daqiqada Telegram kanallarni tekshiradi, Gemini AI orqali tahlil qiladi, agar sizga mos Junior/Intern/AI vakansiya chiqsa:
-- 📞 Telefoningizga qo'ng'iroq qiladi;
-- 🎙 O'zbek tilida ovozli xabar jo'natadi;
-- 📄 Chiroyli matnli tafsilotlarni yuboradi!
+| Buyruq | Tavsif |
+|---|---|
+| `/start` | Botni ishga tushirish va barcha imkoniyatlar |
+| `/add_HR @username [Kompaniya]` | HR ni kuzatuvga olish va Google Calendar eslatmasi |
+| `/my_jobs` | Topshirilgan vakansiyalar ro'yxati |
+| `/channels` | Kuzatilayotgan kanallar |
+| `/add_channel @kanal` | Yangi kanal qo'shish |
+| `/remove_channel @kanal` | Kanalni o'chirish |
+| `/keywords` | Kalit so'zlarni ko'rish |
+| `/add_keyword so'z` | Yangi kalit so'z qo'shish |
+| `/scan` | Barcha manbalarni hoziroq skanerlash |
+| `/call` | Qo'ng'iroq liniyasini sinab ko'rish |
+| `/status` | AI va server holatini tekshirish |
 
 ---
 
-## 🛠 Mahalliy Kompyuterda Sinab Ko'rish (Test qilish)
+## 🚀 Ishga tushirish
 
-Kompyuteringizda tekshirib ko'rmoqchi bo'lsangiz:
 ```bash
-cd c:\Users\behru\Downloads\Vakansiya_qidiruvchi
+# Kutubxonalarni o'rnatish
 pip install -r requirements.txt
+
+# Serverni ishga tushirish
 python main.py
 ```
-Brauzerda `http://localhost:8000/scan` manzilini ochsangiz, u darhol tekshirishni boshlaydi!

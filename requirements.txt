@@ -9,4 +9,8 @@ soundfile>=0.12.1
 numpy>=1.24.0
 requests>=2.31.0
 elevenlabs>=2.0.0
-
+telethon>=1.36.0
+reportlab>=4.0.0
+google-api-python-client>=2.100.0
+google-auth>=2.20.0
+psycopg2-binary>=2.9.0

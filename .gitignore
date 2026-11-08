@@ -5,6 +5,10 @@ __pycache__/
 .venv/
 venv/
 seen_vacancies.db
+*.session
+*.session-journal
+.telethon_temp.json
+*.pdf
 *.mp3
 *.ogg
 .DS_Store

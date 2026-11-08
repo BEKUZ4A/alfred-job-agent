@@ -18,6 +18,19 @@ MAX_MATCHES_PER_SCAN = int(os.getenv("MAX_MATCHES_PER_SCAN", "10"))
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 
+# Telegram Userbot (Telethon) sozlamalari
+TELEGRAM_API_ID = int(os.getenv("TELEGRAM_API_ID", "0")) if os.getenv("TELEGRAM_API_ID") else None
+TELEGRAM_API_HASH = os.getenv("TELEGRAM_API_HASH", "")
+TELEGRAM_STRING_SESSION = os.getenv("TELEGRAM_STRING_SESSION", "")
+TELEGRAM_PHONE = os.getenv("TELEGRAM_PHONE", "")
+
+# Ma'lumotlar bazasi (PostgreSQL / Neon.tech yoki SQLite)
+DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
+
+# Google Calendar sozlamalari
+GOOGLE_SERVICE_ACCOUNT_JSON = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON", "").strip()
+GOOGLE_CALENDAR_ID = os.getenv("GOOGLE_CALENDAR_ID", "primary").strip()
+
 # Google Gemini API kaliti
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 
@@ -32,7 +45,7 @@ PORT = int(os.getenv("PORT", "8000"))
 
 # ElevenLabs Ovoz sozlamalari (Asosiy premium ovoz)
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "sk_d770ede4c9647d52c5c4282b536d6e62b86ef156e3a54a93").strip().strip('"').strip("'")
-ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "cfWx14ZbaEUT4BjIA5tH").strip().strip('"').strip("'")
+ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "GChwNsPvTsqD6tAAORVU").strip().strip('"').strip("'")
 ELEVENLABS_MODEL_ID = os.getenv("ELEVENLABS_MODEL_ID", "eleven_multilingual_v2").strip().strip('"').strip("'")
 
 # Gemini Native Audio TTS sozlamalari (Zaxira tabiiy ovoz)

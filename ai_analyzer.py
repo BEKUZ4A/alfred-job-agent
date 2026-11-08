@@ -59,6 +59,11 @@ BAHOLASH VA FILTRLASH QOIDALARI:
    - Unda HECH QACHON yulduzcha (*), panjara (#), chiziqcha (-), havolalar (http/link), emoji nomlari bo'lmasin. Faqat og'zaki nutqda ravon o'qiladigan toza jumlalar bo'lsin.
    - Masalan: "Assalomu alaykum Behruzbek! Sizga mos yangi vakansiya chiqdi: [Nomi]. Kompaniya [Nomi] sizning FastAPI va Python bo'yicha ko'nikmalaringizga to'liq mos keladi. Barcha ma'lumotlarni chatda qoldirdim."
 
+5. SHUBHALI VA SOXTA E'LONLARNI ANIQLASH (Red-Flag Detector):
+   - Agar e'londa "3 oy bepul stajirovka", "kurs sotish / o'qish uchun pul to'lash", "tarmoq marketingi / piramida", "depozit / garov kiritish" kabi shubhali yoki adolatsiz shartlar bo'lsa:
+     "red_flag": "⚠️ Ehtiyot bo'ling: Ushbu e'londa shubhali shartlar mavjud (kurs sotish / uzoq bepul stajirovka / moliyaviy talab)."
+   - Agar hech qanday shubhali holat bo'lmasa: "red_flag": ""
+
 JAVOBNI FAQAT QUYIDAGI JSON MASSIV (ARRAY) FORMATIDA QAYTAR (boshqa hech qanday kirish yoki tushuntirish so'zlarisiz):
 [
   {{
@@ -73,6 +78,7 @@ JAVOBNI FAQAT QUYIDAGI JSON MASSIV (ARRAY) FORMATIDA QAYTAR (boshqa hech qanday 
     "salary": "400$ - 700$ yoki Kelishilgan narxda",
     "short_summary": "O'zbek tilida 1-2 gapda e'lon haqida xulosa",
     "voice_text": "Assalomu alaykum Behruzbek! Siz uchun ajoyib yangi e'lon chiqdi...",
+    "red_flag": "",
     "reason": "Nima uchun ushbu ish nomzodga mos kelishining sababi"
   }}
 ]
@@ -407,5 +413,91 @@ async def generate_tailored_resume_and_pitch(post_text: str, user_instruction: s
         "❌ <i>Kechirasiz, sun'iy intellekt orqali rezyume va murojaat xatini shakllantirishda xatolik yuz berdi. "
         "Iltimos, qayta urinib ko'ring yoki /status buyrug'ini tekshiring.</i>"
     )
+
+async def generate_interview_prep(vacancy_text: str) -> str:
+    """
+    Suhbatga 5 daqiqada tayyorlash ('🎯 Suhbat savollari' tugmasi):
+    Vakansiyada so'ralgan texnologiyalar bo'yicha 7 ta eng muhim texnik savol
+    va ularga suhbatda qanday qilib sodda, ishonchli javob berish kerakligini generatsiya qilish.
+    """
+    prompt = f"""
+    Sen tajribali Senior Python Dasturchi va Texnik Suhbat oluvchisisan (Tech Lead).
+    Nomzod Behruzbek Bohodirov quyidagi vakansiya bo'yicha texnik suhbatga tayyorlanmoqda.
+
+    VAKANSIYA MATNI:
+    {vacancy_text}
+
+    VAZIFA:
+    Aynan shu vakansiyada so'raladigan 7 ta eng muhim va dolzarb texnik savolni va ularga qanday qilib o'zbek tilida sodda, aniq, professional javob berish kerakligini tuzib ber.
+
+    Har bir savol uchun:
+    - ❓ **Savol N**: (Masalan: Django ORM da N+1 muammosi qanday hal qilinadi?)
+    - 💡 **Soddalashtirilgan javob**: (Intervyuda qanday aytish kerak, kalit atamalar bilan)
+    - 🎯 **Maslahat**: (Intervyuer aynan nimani eshitmoqchi)
+
+    Formatlash: Telegramda qulay o'qilishi uchun chiroyli emojilar va aniq paragraflardan foydalan.
+    """
+    res = await call_gemini_api(prompt)
+    if res:
+        return res.strip()
+    return "❌ <i>Suhbat savollarini generatsiya qilishda xatolik yuz berdi. Qayta urinib ko'ring.</i>"
+
+async def analyze_hr_message(message_text: str, hr_username: str, company: str = "") -> Dict[str, Any]:
+    """
+    HR yozgan xabarni tahlil qilish:
+    - Javob berish shartmi (intervyu, savol, test topshiriq)?
+    - Xabarning qisqa mazmuni
+    - HR'ga yuborish uchun professional javob varianti
+    """
+    prompt = f"""
+    Sen Alfred - Behruzbek Bohodirovning shaxsiy rekrutment assistentisan.
+    Kuzatuvdagi HR (@{hr_username}, {company}) quyidagi xabarni yozdi:
+
+    HR XABARI:
+    "{message_text}"
+
+    NOMZOD HAQIDA:
+    - Behruzbek Bohodirov (Python Backend, Django, FastAPI, AI Agents)
+    - GitHub: https://github.com/BEKUZ4A
+    - Telegram: @BBCnew_2026
+
+    Quyidagi JSON formatda javob qaytar:
+    {{
+      "needs_reply": true/false,
+      "summary": "O'zbek tilida 1 gapda xabarning mohiyati (masalan: Ertaga soat 15:00 da texnik intervyuga taklif qildi)",
+      "suggested_reply": "HR ga yuborish uchun juda professional, samimiy va to'g'ri o'zbekcha yoki ruscha (HR qaysi tilda yozgan bo'lsa shu tilda) tayyor javob matni"
+    }}
+    Faqat toza JSON qaytar.
+    """
+    res = await call_gemini_api(prompt)
+    if res:
+        try:
+            # Markdown json tozalash
+            clean = res.replace("```json", "").replace("```", "").strip()
+            return json.loads(clean)
+        except Exception:
+            pass
+    return {
+        "needs_reply": True,
+        "summary": "HR xabar yubordi: " + message_text[:100],
+        "suggested_reply": "Assalomu alaykum! Xabaringiz uchun rahmat. Taklifingizni mamnuniyat bilan qabul qilaman."
+    }
+
+async def generate_hr_followup(hr_username: str, company: str = "") -> str:
+    """
+    3 kundan keyin HR ga yuboriladigan xushmuomala eslatma (follow-up) matni
+    """
+    prompt = f"""
+    Behruzbek Bohodirov nomidan HR @{hr_username} ga ({company} kompaniyasi bo'yicha) 
+    yuborish uchun juda xushmuomala, professional va qisqa 3 kunlik eslatma (follow-up) xabari yozib ber.
+    Xatda: Ilgari yuborilgan rezyumeni ko'rib chiqishga vaqtlari bo'ldimi-yo'qligi, savollari bo'lsa javob berishga tayyorligi bildirilsin.
+    GitHub profili: https://github.com/BEKUZ4A
+    Faqat yuborishga tayyor matnni chiqar.
+    """
+    res = await call_gemini_api(prompt)
+    if res:
+        return res.strip()
+    return f"Assalomu alaykum! @{hr_username}, avvalgi xabarim yuzasidan bezovta qilayotgan edim. Rezyumemni ko'rib chiqishga imkon bo'ldimi? Savollaringiz bo'lsa, suhbatlashishdan mamnun bo'lardim. Hurmat bilan, Behruzbek Bohodirov (https://github.com/BEKUZ4A)"
+
 
 
