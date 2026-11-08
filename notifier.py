@@ -235,6 +235,42 @@ async def send_telegram_document(file_path: str, caption: str = "", chat_id: str
         except Exception:
             pass
 
+async def edit_telegram_reply_markup(chat_id: str, message_id: int, reply_markup: Optional[Dict] = None) -> bool:
+    """Telegram xabarining inline tugmalarini (reply_markup) yangilash"""
+    target_chat_id = chat_id or TELEGRAM_CHAT_ID
+    if not TELEGRAM_BOT_TOKEN or not target_chat_id or not message_id:
+        return False
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/editMessageReplyMarkup"
+    payload = {
+        "chat_id": target_chat_id,
+        "message_id": message_id,
+        "reply_markup": reply_markup or {"inline_keyboard": []}
+    }
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.post(url, json=payload)
+            return resp.status_code == 200
+    except Exception as e:
+        logger.error(f"edit_telegram_reply_markup xatosi: {e}")
+        return False
+
+async def answer_callback_query(callback_query_id: str, text: Optional[str] = None, show_alert: bool = False) -> bool:
+    """Telegram callback so'roviga javob qaytarish"""
+    if not TELEGRAM_BOT_TOKEN or not callback_query_id:
+        return False
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/answerCallbackQuery"
+    payload = {"callback_query_id": callback_query_id}
+    if text:
+        payload["text"] = text
+        payload["show_alert"] = show_alert
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.post(url, json=payload)
+            return resp.status_code == 200
+    except Exception as e:
+        logger.debug(f"answer_callback_query xatosi: {e}")
+        return False
+
 def format_vacancy_card(item: Dict[str, Any], rank: int = 0) -> str:
     """Vakansiya yoki Frilans buyurtma kartochkasi"""
     analysis = item.get("analysis", {})

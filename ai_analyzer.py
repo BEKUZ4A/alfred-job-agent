@@ -2,8 +2,10 @@ import httpx
 import json
 import logging
 import base64
+import re
+from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional
-from config import GEMINI_API_KEY, CANDIDATE_PROFILE
+from config import GEMINI_API_KEY, CANDIDATE_PROFILE, TASHKENT_TZ
 
 logger = logging.getLogger("Alfred.AIAnalyzer")
 
@@ -494,43 +496,91 @@ async def generate_interview_prep(vacancy_text: str) -> str:
 
 async def analyze_hr_message(message_text: str, hr_username: str, company: str = "") -> Dict[str, Any]:
     """
-    HR yozgan xabarni tahlil qilish:
-    - Javob berish shartmi (intervyu, savol, test topshiriq)?
-    - Xabarning qisqa mazmuni
-    - HR'ga yuborish uchun professional javob varianti
+    HR yozgan xabarni aqlli tahlil qilish (QAT'IY QOIDALAR):
+    1. ANIQ SOAT/UCHRASHUV VAQTI BELGILANGANMI:
+       - has_exact_time: true FAQAT xabarda aniq soat/daqiqa (14:00, 15:30, soat 3 da, 11:00 da) bo'lsagina.
+       - "Bugun vaqtingiz bormi?", "Salom", "Tajribangiz qancha?" kabi savollarga has_exact_time: false!
+    2. has_exact_time true bo'lsa:
+       - exact_time_display: "Bugun, 14:00" yoki "Ertaga, 11:30"
+       - target_iso: ISO 8601 formati
+       - suggested_reply: Suhbat vaqtini tasdiqlovchi xushmuomala qisqa xabar.
+    3. has_exact_time false bo'lsa:
+       - suggested_reply: HR ning savoliga aynan moslashtirilgan, Behruzbek nomidan professional javob matni.
     """
-    prompt = f"""
-    Sen Alfred - Behruzbek Bohodirovning shaxsiy rekrutment assistentisan.
-    Kuzatuvdagi HR (@{hr_username}, {company}) quyidagi xabarni yozdi:
+    now_tash = datetime.now(TASHKENT_TZ)
+    now_str = now_tash.strftime("%d-%m-%Y %H:%M")
 
-    HR XABARI:
+    prompt = f"""
+    Sen Alfred — Behruzbek Bohodirovning shaxsiy professional IT-rekruteri va assistentisan.
+    Nomzod haqida: Behruzbek Bohodirov, Python Backend Developer (Python, Django, FastAPI, PostgreSQL, Docker, Redis, Celery, AI Agents).
+    GitHub: https://github.com/BEKUZ4A, Telegram: @BBCnew_2026.
+
+    Kuzatuvdagi HR (@{hr_username}{f' - {company}' if company else ''}) nomzodga Telegramda quyidagi xabarni yozdi:
     "{message_text}"
 
-    NOMZOD HAQIDA:
-    - Behruzbek Bohodirov (Python Backend, Django, FastAPI, AI Agents)
-    - GitHub: https://github.com/BEKUZ4A
-    - Telegram: @BBCnew_2026
+    Hozirgi Toshkent vaqti (UTC+5): {now_str}
 
-    Quyidagi JSON formatda javob qaytar:
+    QAT'IY BAHOLASH VA TAHLIL QOIDALARI:
+    1. ANIQ UCHRASHUV SOATI BELGILANGANMI (has_exact_time):
+       - "has_exact_time": true FAQAT VA FAQAT xabar ichida intervyu/suhbat uchun ANIQ SOAT yoki DAQIQA (masalan: "14:00", "soat 3 da", "15:30", "11:00 da", "ertaga soat 16:00 da") aytilgan bo'lsagina true bo'ladi!
+       - Agar HR shunchaki umumiy savol so'rayotgan bo'lsa (masalan: "Bugun vaqtingiz bormi?", "Bugun gaplashsak bo'ladimi?", "Tajribangiz qancha?", "Salom", "Qachon bo'shsiz?"):
+         -> "has_exact_time": false BO'LISHI SHART! Hech qachon umumiy savolga yoki vaqt so'rashga true dema!
+    2. Agar "has_exact_time": true bo'lsa:
+       - "exact_time_display": "Bugun, 14:00" yoki "Ertaga, 11:30" (aniq belgilangan soat). "Tez orada" yoki mavhum so'zlar yozish QAT'IYAN TAQIQLANADI!
+       - "target_iso": Uchrashuv vaqtining ISO formati (masalan: {now_tash.strftime('%Y-%m-%d')}T14:00:00+05:00).
+       - "suggested_reply": Suhbat vaqtini xushmuomalalik bilan tasdiqlovchi qisqa xabar.
+    3. Agar "has_exact_time": false bo'lsa:
+       - "exact_time_display": ""
+       - "target_iso": ""
+       - "suggested_reply": HR yozgan xabar yoki savolga aynan mos, Behruzbek nomidan juda samimiy va professional javob (masalan: "Bugun vaqtingiz bormi?" desa: "Assalomu alaykum! Ha, albatta, bugun bemalol gaplasha olamiz. Sizga qaysi soat qulay bo'ladi?", "Tajribangiz qancha?" desa tajriba haqida va GitHub havolasi bilan).
+
+    JAVOBNI FAQAT QUYIDAGI JSON FORMATIDA QAYTAR (boshqa hech qanday so'zsiz):
     {{
-      "needs_reply": true/false,
-      "summary": "O'zbek tilida 1 gapda xabarning mohiyati (masalan: Ertaga soat 15:00 da texnik intervyuga taklif qildi)",
-      "suggested_reply": "HR ga yuborish uchun juda professional, samimiy va to'g'ri o'zbekcha yoki ruscha (HR qaysi tilda yozgan bo'lsa shu tilda) tayyor javob matni"
+      "has_exact_time": false,
+      "exact_time_display": "",
+      "target_iso": "",
+      "suggested_reply": "HR ga yuborish uchun tayyor javob matni"
     }}
-    Faqat toza JSON qaytar.
     """
     res = await call_gemini_api(prompt)
     if res:
         try:
-            # Markdown json tozalash
             clean = res.replace("```json", "").replace("```", "").strip()
-            return json.loads(clean)
-        except Exception:
-            pass
+            data = json.loads(clean)
+            if isinstance(data, dict):
+                has_exact = bool(data.get("has_exact_time"))
+                exact_disp = str(data.get("exact_time_display", "")).strip()
+                if "tez orada" in exact_disp.lower():
+                    has_exact = False
+                    exact_disp = ""
+                return {
+                    "has_exact_time": has_exact,
+                    "exact_time_display": exact_disp,
+                    "target_iso": str(data.get("target_iso", "")).strip(),
+                    "suggested_reply": str(data.get("suggested_reply", "")).strip() or "Assalomu alaykum! Xabaringiz uchun rahmat. Suhbatlashishga tayyorman."
+                }
+        except Exception as e_json:
+            logger.debug(f"analyze_hr_message JSON parse xatosi: {e_json}")
+
+    # Zaxira (Fallback) regex tekshiruvi: faqat aniq soat/daqiqa bo'lsa
+    m_hm = re.search(r"\b([01]?\d|2[0-3])[:.]([0-5]\d)\b", message_text)
+    m_h = re.search(r"(?:soat\s*|в\s*)(\d{1,2})", message_text, re.IGNORECASE)
+    if m_hm or m_h:
+        hour = int(m_hm.group(1)) if m_hm else int(m_h.group(1))
+        minute = int(m_hm.group(2)) if m_hm else 0
+        exact_disp = f"Bugun, {hour:02d}:{minute:02d}"
+        return {
+            "has_exact_time": True,
+            "exact_time_display": exact_disp,
+            "target_iso": f"{now_tash.strftime('%Y-%m-%d')}T{hour:02d}:{minute:02d}:00+05:00",
+            "suggested_reply": "Assalomu alaykum! Taklif qilingan vaqt menga to'liq to'g'ri keladi. Belgilangan vaqtda suhbatga tayyor bo'laman. Rahmat!"
+        }
+
     return {
-        "needs_reply": True,
-        "summary": "HR xabar yubordi: " + message_text[:100],
-        "suggested_reply": "Assalomu alaykum! Xabaringiz uchun rahmat. Taklifingizni mamnuniyat bilan qabul qilaman."
+        "has_exact_time": False,
+        "exact_time_display": "",
+        "target_iso": "",
+        "suggested_reply": "Assalomu alaykum! Xabaringiz uchun katta rahmat. Taklifingiz bo'yicha batafsil suhbatlashishdan mamnun bo'laman."
     }
 
 async def generate_hr_followup(hr_username: str, company: str = "") -> str:

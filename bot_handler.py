@@ -21,7 +21,9 @@ from notifier import (
     send_telegram_voice, 
     send_telegram_document,
     format_vacancy_card, 
-    make_call
+    make_call,
+    edit_telegram_reply_markup,
+    answer_callback_query
 )
 from scraper import scrape_telegram_channel, scrape_hh_uz, scrape_telegram_single_post
 from database import (
@@ -42,7 +44,11 @@ from database import (
     get_managed_channels,
     add_managed_keyword,
     remove_managed_keyword,
-    get_managed_keywords
+    get_managed_keywords,
+    compute_content_hash,
+    is_vacancy_seen,
+    is_job_applied,
+    get_hr_pending_reply
 )
 from pdf_generator import generate_pdf_resume
 from userbot import delete_hr_dialog, send_message_as_user
@@ -198,11 +204,39 @@ async def search_channel_vacancies(channel: str, display_name: str, chat_id: str
         )
         return
 
+    # 1.5. Qat'iy dublikat tekshiruvi: avval ko'rilgan yoki topshirilgan e'lonlarni tashlab ketish
+    fresh_vacancies = []
+    seen_hashes_in_ch = set()
+    for vac in vacancies:
+        c_hash = compute_content_hash(vac.get("text", ""), vac.get("title", ""), vac.get("company", ""))
+        vac["content_hash"] = c_hash
+        v_url = vac.get("url", "")
+        v_id = vac.get("id", "")
+        v_title = vac.get("title", "")
+        v_comp = vac.get("company", "")
+
+        if c_hash in seen_hashes_in_ch:
+            continue
+        seen_hashes_in_ch.add(c_hash)
+
+        if is_vacancy_seen(v_id, url=v_url, content_hash=c_hash, title=v_title, company=v_comp):
+            continue
+        if is_job_applied(v_id, url=v_url, content_hash=c_hash, title=v_title, company=v_comp):
+            continue
+        fresh_vacancies.append(vac)
+
+    if not fresh_vacancies:
+        await send_telegram_message(
+            f"ℹ️ <b>{display_name}</b> kanalidagi barcha yangi e'lonlar allaqachon ko'rib chiqilgan yoki topshirilgan.",
+            chat_id=chat_id
+        )
+        return
+
     # 2. Gemini orqali tahlil qilish
-    analysis_results = await batch_analyze_vacancies(vacancies[:10])
+    analysis_results = await batch_analyze_vacancies(fresh_vacancies[:10])
     
     matches = []
-    for vac in vacancies:
+    for vac in fresh_vacancies:
         analysis = next((a for a in analysis_results if str(a.get("id")) == str(vac["id"])), None)
         if analysis and analysis.get("is_relevant") and analysis.get("match_score", 0) >= MIN_MATCH_SCORE:
             vac["analysis"] = analysis
@@ -215,7 +249,13 @@ async def search_channel_vacancies(channel: str, display_name: str, chat_id: str
                 url=vac["url"],
                 source=vac["source"],
                 match_score=analysis.get("match_score", 0),
-                ai_summary=analysis.get("short_summary", "")
+                ai_summary=analysis.get("short_summary", ""),
+                job_type=analysis.get("job_type", vac.get("job_type", "vacancy")),
+                raw_text=vac.get("text", ""),
+                salary=analysis.get("salary", ""),
+                red_flag=analysis.get("red_flag", ""),
+                posted_at=vac.get("posted_at", ""),
+                content_hash=vac.get("content_hash", "")
             )
             
     # 3. Natijalarni yuborish
@@ -416,6 +456,11 @@ async def process_telegram_update(update: Dict[str, Any], trigger_scan_callback=
             await send_telegram_message(prep_text, chat_id=cb_chat_id)
             return
 
+        # 0. Takroriy bosilgan tugmalar
+        if cb_data in ["noop_action", "noop_hr_sent", "noop_applied"]:
+            await answer_callback_query(cb_query.get("id"), text="Bu amal allaqachon bajarilgan!")
+            return
+
         # 3. ✅ Topshirdim (Mini-CRM)
         if cb_data.startswith("applied_"):
             vac_id = cb_data.replace("applied_", "")
@@ -425,11 +470,19 @@ async def process_telegram_update(update: Dict[str, Any], trigger_scan_callback=
                     vacancy_id=vac_id,
                     title=vac.get("title", "Vakansiya"),
                     company=vac.get("company", ""),
-                    url=vac.get("url", "#")
+                    url=vac.get("url", "#"),
+                    content_hash=vac.get("content_hash", "")
                 )
+            cb_msg_id = cb_query.get("message", {}).get("message_id")
+            if cb_msg_id:
+                await edit_telegram_reply_markup(cb_chat_id, cb_msg_id, {
+                    "inline_keyboard": [
+                        [{"text": "☑️ Topshirildi", "callback_data": "noop_applied"}]
+                    ]
+                })
             await send_telegram_message(
                 "✅ <b>Ushbu vakansiyaga topshirildi deb belgilandi!</b>\n"
-                "Barcha topshirgan ishlaringiz ro'yxatini ko'rish uchun /my_jobs buyrug'ini bosing.",
+                "U endi qidiruvda HECH QACHON qayta chiqmaydi. /my_jobs orqali barcha topshirgan ishlaringizni ko'rishingiz mumkin.",
                 chat_id=cb_chat_id
             )
             return
@@ -463,21 +516,29 @@ async def process_telegram_update(update: Dict[str, Any], trigger_scan_callback=
             )
             return
 
-        # 6. ✅ HR ga javob yuborish (Telegram Userbot orqali)
+        # 6. ✅ HR ga tavsiya etilgan javobni yuborish (Telegram Userbot orqali)
         if cb_data.startswith("send_hr_reply_"):
             username = cb_data.replace("send_hr_reply_", "").strip().lstrip("@")
             hr = get_tracked_hr(username)
-            last_msg = hr.get("last_message", "") if hr else ""
             company = hr.get("company", "") if hr else ""
+            reply_to_send = get_hr_pending_reply(username)
 
-            # Gemini dan so'nggi javob matnini olish
-            analysis = await analyze_hr_message(last_msg, username, company)
-            reply_to_send = analysis.get("suggested_reply", "Assalomu alaykum! Xabaringiz uchun rahmat.")
+            if not reply_to_send:
+                last_msg = hr.get("last_message", "") if hr else ""
+                analysis = await analyze_hr_message(last_msg, username, company)
+                reply_to_send = analysis.get("suggested_reply", "Assalomu alaykum! Xabaringiz uchun rahmat. Suhbatlashishga tayyorman.")
 
             sent = await send_message_as_user(username, reply_to_send)
             if sent:
+                cb_msg_id = cb_query.get("message", {}).get("message_id")
+                if cb_msg_id:
+                    await edit_telegram_reply_markup(cb_chat_id, cb_msg_id, {
+                        "inline_keyboard": [
+                            [{"text": "☑️ Javob HR'ga yuborildi", "callback_data": "noop_hr_sent"}]
+                        ]
+                    })
                 await send_telegram_message(
-                    f"✅ <b>Xabar HR @{username} ga shaxsiy Telegramingizdan yuborildi!</b>\n\n"
+                    f"✅ <b>Javobingiz HR @{username} ga shaxsiy Telegramingizdan yuborildi!</b>\n\n"
                     f"<i>\"{reply_to_send}\"</i>",
                     chat_id=cb_chat_id
                 )
@@ -537,6 +598,13 @@ async def process_telegram_update(update: Dict[str, Any], trigger_scan_callback=
             )
             sent = await send_message_as_user(hr_username, confirm_msg)
             if sent:
+                cb_msg_id = cb_query.get("message", {}).get("message_id")
+                if cb_msg_id:
+                    await edit_telegram_reply_markup(cb_chat_id, cb_msg_id, {
+                        "inline_keyboard": [
+                            [{"text": "☑️ Tasdiq HR'ga yuborildi", "callback_data": "noop_hr_sent"}]
+                        ]
+                    })
                 await send_telegram_message(
                     f"✅ <b>HR @{hr_username} ga tasdiqlash javobi shaxsiy Telegramingizdan yuborildi!</b>\n\n"
                     f"<i>\"{confirm_msg}\"</i>",

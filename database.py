@@ -1,3 +1,5 @@
+import hashlib
+import re
 import os
 import sqlite3
 from datetime import datetime, timedelta
@@ -67,6 +69,7 @@ def init_db():
             salary TEXT DEFAULT '',
             red_flag TEXT DEFAULT '',
             posted_at TEXT DEFAULT '',
+            content_hash TEXT DEFAULT '',
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
         CREATE TABLE IF NOT EXISTS tracked_hrs (
@@ -79,6 +82,7 @@ def init_db():
             cal_event_7d TEXT DEFAULT '',
             last_message TEXT DEFAULT '',
             last_seen_msg_id BIGINT DEFAULT 0,
+            pending_reply TEXT DEFAULT '',
             last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
         CREATE TABLE IF NOT EXISTS applied_jobs (
@@ -87,6 +91,7 @@ def init_db():
             title TEXT,
             company TEXT,
             url TEXT,
+            content_hash TEXT DEFAULT '',
             applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             status TEXT DEFAULT 'applied'
         );
@@ -114,6 +119,7 @@ def init_db():
             salary TEXT DEFAULT '',
             red_flag TEXT DEFAULT '',
             posted_at TEXT DEFAULT '',
+            content_hash TEXT DEFAULT '',
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
         """)
@@ -128,6 +134,7 @@ def init_db():
             cal_event_7d TEXT DEFAULT '',
             last_message TEXT DEFAULT '',
             last_seen_msg_id INTEGER DEFAULT 0,
+            pending_reply TEXT DEFAULT '',
             last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
         """)
@@ -138,6 +145,7 @@ def init_db():
             title TEXT,
             company TEXT,
             url TEXT,
+            content_hash TEXT DEFAULT '',
             applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             status TEXT DEFAULT 'applied'
         )
@@ -161,16 +169,28 @@ def init_db():
             ("raw_text", "TEXT DEFAULT ''"), 
             ("salary", "TEXT DEFAULT ''"), 
             ("red_flag", "TEXT DEFAULT ''"),
-            ("posted_at", "TEXT DEFAULT ''")
+            ("posted_at", "TEXT DEFAULT ''"),
+            ("content_hash", "TEXT DEFAULT ''")
         ]:
             try:
                 cursor.execute(f"ALTER TABLE seen_vacancies ADD COLUMN {col} {col_type}")
             except sqlite3.OperationalError:
                 pass
 
-        for col, col_type in [("last_seen_msg_id", "INTEGER DEFAULT 0")]:
+        for col, col_type in [
+            ("last_seen_msg_id", "INTEGER DEFAULT 0"),
+            ("pending_reply", "TEXT DEFAULT ''")
+        ]:
             try:
                 cursor.execute(f"ALTER TABLE tracked_hrs ADD COLUMN {col} {col_type}")
+            except sqlite3.OperationalError:
+                pass
+
+        for col, col_type in [
+            ("content_hash", "TEXT DEFAULT ''")
+        ]:
+            try:
+                cursor.execute(f"ALTER TABLE applied_jobs ADD COLUMN {col} {col_type}")
             except sqlite3.OperationalError:
                 pass
 
@@ -179,9 +199,95 @@ def init_db():
 
 # ----------------- VAKANSIYALAR FUNKSIYALARI -----------------
 
-def is_vacancy_seen(vacancy_id: str) -> bool:
-    row = execute_query("SELECT 1 FROM seen_vacancies WHERE id = ?", (vacancy_id,), fetch_one=True)
-    return row is not None
+def compute_content_hash(text: str = "", title: str = "", company: str = "") -> str:
+    """
+    Vakansiya takrorlanmasligi (dublikat) uchun unikal xesh.
+    Matnning birinchi 150 ta harf va raqamlarini olib, sarlavha va kompaniya bilan xeshlaydi.
+    """
+    clean_title = re.sub(r"[^a-zA-Z0-9а-яА-ЯёЁo'g'shch]+", "", (title or "").lower())
+    clean_comp = re.sub(r"[^a-zA-Z0-9а-яА-ЯёЁo'g'shch]+", "", (company or "").lower())
+    clean_body = re.sub(r"[^a-zA-Z0-9а-яА-ЯёЁo'g'shch]+", "", (text or "").lower())[:150]
+    base_str = f"{clean_title}:{clean_comp}:{clean_body}"
+    return hashlib.sha256(base_str.encode("utf-8")).hexdigest()
+
+def is_vacancy_seen(
+    vacancy_id: str, 
+    url: Optional[str] = None, 
+    content_hash: Optional[str] = None,
+    title: Optional[str] = None,
+    company: Optional[str] = None
+) -> bool:
+    """
+    Vakansiya ilgari ko'rilganligini tekshirish:
+    1. vacancy_id bo'yicha
+    2. url (parametrlarisiz toza havola) bo'yicha
+    3. content_hash bo'yicha
+    4. title + company birikmasi bo'yicha
+    """
+    if vacancy_id:
+        row = execute_query("SELECT 1 FROM seen_vacancies WHERE id = ?", (vacancy_id,), fetch_one=True)
+        if row:
+            return True
+            
+    if url and url != "#":
+        clean_url = url.split("?")[0].strip()
+        row = execute_query("SELECT 1 FROM seen_vacancies WHERE url LIKE ? OR url = ?", (f"{clean_url}%", url), fetch_one=True)
+        if row:
+            return True
+            
+    if content_hash:
+        row = execute_query("SELECT 1 FROM seen_vacancies WHERE content_hash = ?", (content_hash,), fetch_one=True)
+        if row:
+            return True
+
+    if title and company and len(title.strip()) > 5:
+        row = execute_query(
+            "SELECT 1 FROM seen_vacancies WHERE LOWER(title) = ? AND LOWER(company) = ? AND company != ''", 
+            (title.strip().lower(), company.strip().lower()), 
+            fetch_one=True
+        )
+        if row:
+            return True
+
+    return False
+
+def is_job_applied(
+    vacancy_id: Optional[str] = None, 
+    url: Optional[str] = None, 
+    content_hash: Optional[str] = None,
+    title: Optional[str] = None,
+    company: Optional[str] = None
+) -> bool:
+    """
+    Foydalanuvchi bu vakansiyaga oldin 'Topshirdim' deb belgilaganligini tekshirish:
+    Agar topshirilgan bo'lsa, uni HECH QACHON qayta chiqarmaslik shart!
+    """
+    if vacancy_id:
+        row = execute_query("SELECT 1 FROM applied_jobs WHERE vacancy_id = ?", (vacancy_id,), fetch_one=True)
+        if row:
+            return True
+            
+    if url and url != "#":
+        clean_url = url.split("?")[0].strip()
+        row = execute_query("SELECT 1 FROM applied_jobs WHERE url LIKE ? OR url = ?", (f"{clean_url}%", url), fetch_one=True)
+        if row:
+            return True
+            
+    if content_hash:
+        row = execute_query("SELECT 1 FROM applied_jobs WHERE content_hash = ?", (content_hash,), fetch_one=True)
+        if row:
+            return True
+
+    if title and company and len(title.strip()) > 5:
+        row = execute_query(
+            "SELECT 1 FROM applied_jobs WHERE LOWER(title) = ? AND LOWER(company) = ? AND company != ''", 
+            (title.strip().lower(), company.strip().lower()), 
+            fetch_one=True
+        )
+        if row:
+            return True
+
+    return False
 
 def mark_vacancy_seen(
     vacancy_id: str, 
@@ -195,12 +301,16 @@ def mark_vacancy_seen(
     raw_text: str = "",
     salary: str = "",
     red_flag: str = "",
-    posted_at: str = ""
+    posted_at: str = "",
+    content_hash: str = ""
 ):
+    if not content_hash:
+        content_hash = compute_content_hash(raw_text or ai_summary, title, company)
+
     if is_postgres():
         execute_query("""
-        INSERT INTO seen_vacancies (id, title, company, url, source, match_score, ai_summary, job_type, raw_text, salary, red_flag, posted_at, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        INSERT INTO seen_vacancies (id, title, company, url, source, match_score, ai_summary, job_type, raw_text, salary, red_flag, posted_at, content_hash, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
         ON CONFLICT (id) DO UPDATE SET
             title = EXCLUDED.title,
             company = EXCLUDED.company,
@@ -211,13 +321,14 @@ def mark_vacancy_seen(
             raw_text = EXCLUDED.raw_text,
             salary = EXCLUDED.salary,
             red_flag = EXCLUDED.red_flag,
-            posted_at = EXCLUDED.posted_at
-        """, (vacancy_id, title, company, url, source, match_score, ai_summary, job_type, raw_text, salary, red_flag, posted_at), commit=True)
+            posted_at = EXCLUDED.posted_at,
+            content_hash = EXCLUDED.content_hash
+        """, (vacancy_id, title, company, url, source, match_score, ai_summary, job_type, raw_text, salary, red_flag, posted_at, content_hash), commit=True)
     else:
         execute_query("""
-        INSERT OR REPLACE INTO seen_vacancies (id, title, company, url, source, match_score, ai_summary, job_type, raw_text, salary, red_flag, posted_at, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-        """, (vacancy_id, title, company, url, source, match_score, ai_summary, job_type, raw_text, salary, red_flag, posted_at), commit=True)
+        INSERT OR REPLACE INTO seen_vacancies (id, title, company, url, source, match_score, ai_summary, job_type, raw_text, salary, red_flag, posted_at, content_hash, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        """, (vacancy_id, title, company, url, source, match_score, ai_summary, job_type, raw_text, salary, red_flag, posted_at, content_hash), commit=True)
 
 def get_vacancy_by_id(vacancy_id: str) -> Optional[Dict]:
     return execute_query("SELECT * FROM seen_vacancies WHERE id = ?", (vacancy_id,), fetch_one=True)
@@ -318,24 +429,38 @@ def update_hr_status(username: str, status: str, last_message: str = ""):
         WHERE LOWER(username) = ?
         """, (status, username), commit=True)
 
+def update_hr_pending_reply(username: str, pending_reply: str):
+    """HR uchun tavsiya qilingan javobni bazada saqlash"""
+    username = username.strip().lstrip("@").lower()
+    execute_query("UPDATE tracked_hrs SET pending_reply = ? WHERE LOWER(username) = ?", (pending_reply, username), commit=True)
+
+def get_hr_pending_reply(username: str) -> str:
+    """HR uchun tavsiya qilingan oxirgi javobni olish"""
+    username = username.strip().lstrip("@").lower()
+    row = execute_query("SELECT pending_reply FROM tracked_hrs WHERE LOWER(username) = ?", (username,), fetch_one=True)
+    return row.get("pending_reply", "") if row else ""
+
 def delete_tracked_hr(username: str):
     username = username.strip().lstrip("@").lower()
     execute_query("DELETE FROM tracked_hrs WHERE LOWER(username) = ?", (username,), commit=True)
 
 # ----------------- TOPSHIRILGAN ISHLAR (APPLIED JOBS) -----------------
 
-def mark_job_applied(vacancy_id: str, title: str, company: str, url: str) -> bool:
+def mark_job_applied(vacancy_id: str, title: str, company: str, url: str, content_hash: str = "") -> bool:
+    if not content_hash:
+        content_hash = compute_content_hash("", title, company)
     if is_postgres():
         execute_query("""
-        INSERT INTO applied_jobs (vacancy_id, title, company, url, status, applied_at)
-        VALUES (?, ?, ?, ?, 'applied', CURRENT_TIMESTAMP)
-        ON CONFLICT (vacancy_id) DO NOTHING
-        """, (vacancy_id, title, company, url), commit=True)
+        INSERT INTO applied_jobs (vacancy_id, title, company, url, content_hash, status, applied_at)
+        VALUES (?, ?, ?, ?, ?, 'applied', CURRENT_TIMESTAMP)
+        ON CONFLICT (vacancy_id) DO UPDATE SET
+            content_hash = COALESCE(NULLIF(EXCLUDED.content_hash, ''), applied_jobs.content_hash)
+        """, (vacancy_id, title, company, url, content_hash), commit=True)
     else:
         execute_query("""
-        INSERT OR IGNORE INTO applied_jobs (vacancy_id, title, company, url, status, applied_at)
-        VALUES (?, ?, ?, ?, 'applied', CURRENT_TIMESTAMP)
-        """, (vacancy_id, title, company, url), commit=True)
+        INSERT OR REPLACE INTO applied_jobs (vacancy_id, title, company, url, content_hash, status, applied_at)
+        VALUES (?, ?, ?, ?, ?, 'applied', CURRENT_TIMESTAMP)
+        """, (vacancy_id, title, company, url, content_hash), commit=True)
     return True
 
 def get_applied_jobs(limit: int = 15) -> List[Dict]:

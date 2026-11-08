@@ -123,7 +123,7 @@ def parse_meeting_time(text: str) -> tuple[Optional[datetime], str]:
         except Exception:
             pass
 
-    return None, "Tez orada"
+    return None, ""
 
 async def schedule_15min_reminder(target_dt: datetime, hr_username: str, company: str, time_display: str):
     """Suhbatga 15 daqiqa qolganda avtomatik qo'ng'iroq va eslatma qiluvchi taymer"""
@@ -164,51 +164,61 @@ async def schedule_15min_reminder(target_dt: datetime, hr_username: str, company
 
     asyncio.create_task(_reminder_coro())
 
-async def handle_hr_incoming_message(hr_username: str, company: str, msg: Any):
-    """
-    Kuzatuvdagi istalgan HR dan yangi xabar kelganda:
-    - Agar vaqt/uchrashuv aytilgan bo'lsa: qo'ng'iroq + ElevenLabs ovoz + 3 ta signal + 15 min oldingi taymer + [✅ Tasdiqlash javobini HR'ga yuborish]
-    - Boshqa har qanday xabar bo'lsa: darhol bildirishnoma + [✅ Javobni yuborish (Telegramdan)]
-    """
-    msg_text = msg.text or ""
-    time_str = format_message_time(msg.date)
-    is_meeting = is_time_or_meeting_proposal(msg_text)
+handled_incoming_cache = set()
 
+async def handle_hr_incoming_message(hr_username: str, company: str, message_text: str, msg_date: Any):
+    """
+    Kuzatuvdagi HR dan yangi xabar kelganda FAQAT 1 TA bildirishnoma yuborish:
+    1. Agar aniq suhbat soati aytilgan bo'lsa: 1 ta xabar + qo'ng'iroq + ovoz + 15 min oldingi taymer + [✅ Tasdiqlash javobini HR'ga yuborish]
+    2. Agar savol yoki vaqt so'rash bo'lsa: 1 ta xabar (HR xabari + Gemini tavsiya qilgan mos javob) + [✅ Shu javobni HR'ga yuborish]
+    Spam va takrorlanish (3 marta yuborish) BUTUNLAY yo'q!
+    """
+    time_str = format_message_time(msg_date)
+
+    from ai_analyzer import analyze_hr_message
     from notifier import make_call, send_telegram_message, send_telegram_voice
     from voice import generate_voice_message
+    from database import update_hr_pending_reply
 
-    if is_meeting:
-        target_dt, dt_display = parse_meeting_time(msg_text)
-        logger.info(f"🚨 HR @{hr_username} VAQT BELGILADI! ({dt_display}): {msg_text[:50]}")
+    analysis = await analyze_hr_message(message_text, hr_username, company)
+    has_exact_time = analysis.get("has_exact_time", False)
+    exact_time_display = analysis.get("exact_time_display", "")
+    suggested_reply = analysis.get("suggested_reply", "")
+    target_iso = analysis.get("target_iso", "")
 
-        # a) DARHOL qo'ng'iroq (Telegram Call / CallMeBot)
-        await make_call(f"Behruzbek! HR @{hr_username} vaqt belgilayapti, tez Telegramga kiring!", force=True)
+    # Pending reply ni saqlab qo'yamiz (tugma bosilganda darhol yuborish uchun)
+    if suggested_reply:
+        update_hr_pending_reply(hr_username, suggested_reply)
 
-        # b) ElevenLabs ovozli xabari
+    if has_exact_time and exact_time_display:
+        logger.info(f"📅 HR @{hr_username} ANIQ VAQT BELGILADI: {exact_time_display}")
+
+        # a) DARHOL qo'ng'iroq (1 marta)
+        await make_call(f"Behruzbek! HR @{hr_username} suhbat vaqtini belgiladi: {exact_time_display}", force=True)
+
+        # b) ElevenLabs ovozli xabari (1 marta)
         try:
-            voice_text = f"Behruzbek! HR {hr_username} sizga vaqt belgilayapti, tez Telegramga kiring!"
-            v_file = await generate_voice_message(voice_text, prepare_script=False)
+            voice_txt = f"Behruzbek! HR {hr_username} soat {exact_time_display} ga suhbat belgiladi. Tez Telegramga kiring!"
+            v_file = await generate_voice_message(voice_txt, prepare_script=False)
             if v_file:
-                await send_telegram_voice(v_file, caption=f"🎙 HR @{hr_username} vaqt belgiladi")
+                await send_telegram_voice(v_file, caption=f"🎙 HR @{hr_username} suhbat vaqtini belgiladi: {exact_time_display}")
         except Exception as e_v:
-            logger.warning(f"Ovozli xabarda xato: {e_v}")
+            logger.warning(f"Ovozli xabarda ogohlantirish: {e_v}")
 
-        # c) Ketma-ket 3 ta shoshilinch signal
-        for _ in range(3):
-            await send_telegram_message(
-                f"🚨🚨🚨 <b>SHOSHILINCH: HR VAQT BELGILADI!</b>\n\n"
-                f"👤 <b>HR:</b> @{hr_username} ({company or 'Kompaniya'})\n"
-                f"🕒 <b>Kelgan vaqti:</b> {time_str} (Belgilangan: <b>{dt_display}</b>)\n"
-                f"💬 <b>Xabar:</b>\n<i>\"{msg_text}\"</i>\n\n"
-                f"<i>Iltimos, zudlik bilan Telegramga kiring!</i>"
-            )
-            await asyncio.sleep(1)
+        # c) 15 daqiqa oldin eslatish taymeri
+        target_dt = None
+        if target_iso:
+            try:
+                target_dt = datetime.fromisoformat(target_iso)
+            except Exception:
+                pass
+        if not target_dt:
+            target_dt, _ = parse_meeting_time(message_text)
 
-        # d) Belgilangan vaqtga 15 daqiqa qolganda avtomatik taymer
         if target_dt:
-            await schedule_15min_reminder(target_dt, hr_username, company, dt_display)
+            await schedule_15min_reminder(target_dt, hr_username, company, exact_time_display)
 
-        # e) [✅ Tasdiqlash javobini HR'ga yuborish] tugmasi
+        # d) FAQAT 1 TA xabar va ostida tasdiqlash tugmasi
         reply_markup = {
             "inline_keyboard": [
                 [
@@ -217,37 +227,39 @@ async def handle_hr_incoming_message(hr_username: str, company: str, msg: Any):
             ]
         }
         await send_telegram_message(
-            f"📅 <b>HR @{hr_username} ({company or 'Kompaniya'}) suhbat/uchrashuv vaqtini belgiladi:</b>\n\n"
-            f"💬 <i>\"{msg_text}\"</i>\n\n"
-            f"⏰ <b>Suhbat vaqti:</b> {dt_display}\n"
-            f"💡 <i>Ushbu vaqtga 15 daqiqa qolganda Alfred sizga avtomatik eslatma va qo'ng'iroq qiladi.</i>\n\n"
-            f"HR ga tasdiqlash xabarini shaxsiy Telegramingizdan yuborish uchun pastdagi tugmani bosing:",
+            f"📅 <b>HR suhbat soatini belgiladi: {exact_time_display}</b>\n\n"
+            f"👤 <b>HR:</b> @{hr_username} ({company or 'Kompaniya'})\n"
+            f"🕒 <b>Kelgan vaqti:</b> {time_str}\n"
+            f"💬 <b>HR xabari:</b>\n<i>\"{message_text}\"</i>\n\n"
+            f"⏰ <b>Belgilangan suhbat vaqti:</b> <b>{exact_time_display}</b>\n"
+            f"💡 <i>Ushbu vaqtdan 15 daqiqa oldin Alfred sizga avtomatik eslatma va qo'ng'iroq qiladi.</i>\n\n"
+            f"Tasdiqlash xabarini HR'ga yuborish uchun pastdagi tugmani bosing:",
             reply_markup=reply_markup
         )
     else:
-        # Oddiy xabar (Salom, test topshiriq, savol va h.k.)
-        logger.info(f"📩 HR @{hr_username} oddiy xabar yozdi: {msg_text[:40]}")
+        # Savol yoki vaqt so'rash — HECH QANDAY YOLG'ON TAYMER VA SPAMSIZ!
+        logger.info(f"📩 HR @{hr_username} savol/xabar yozdi: {message_text[:50]}")
         reply_markup = {
             "inline_keyboard": [
                 [
-                    {"text": "✅ Javobni yuborish (Telegramdan)", "callback_data": f"send_hr_reply_{hr_username}"}
+                    {"text": "✅ Shu javobni HR'ga yuborish", "callback_data": f"send_hr_reply_{hr_username}"}
                 ]
             ]
         }
         await send_telegram_message(
-            f"📩 <b>HR (@{hr_username} - {company or 'Kompaniya'}) sizga yozdi!</b>\n\n"
-            f"🕒 <b>Vaqti:</b> {time_str}\n"
-            f"💬 <b>Xabar:</b>\n<i>\"{msg_text}\"</i>",
+            f"📩 <b>HR (@{hr_username}{f' - {company}' if company else ''}) xabar yozdi:</b>\n"
+            f"💬 <i>\"{message_text}\"</i>\n\n"
+            f"🤖 <b>Tavsiya etilgan javob:</b>\n"
+            f"<i>\"{suggested_reply}\"</i>",
             reply_markup=reply_markup
         )
 
 async def hr_monitor_loop():
     """
     BARCHA qo'shilgan HR larni har 10 soniyada DINAMIK kuzatish fon sikli:
-    - Bazadagi tracked_hrs jadvalidagi HAR BIR HR ni aylanib chiqadi
-    - await userbot.get_messages(hr.username, limit=3) orqali oxirgi xabarlarni tekshiradi
-    - msg.id > hr.last_seen_msg_id va not msg.out bo'lsa darhol bildirishnoma beradi
-    - last_seen_msg_id ni bazada yangilaydi (takrorlanmasligi uchun)
+    - Ketma-ket kelgan bir nechta xabarlarni 1 ta umumiy bildirishnomaga birlashtiradi
+    - last_seen_msg_id ni darhol eng oxirgi xabar ID siga yangilaydi
+    - Bitta xabarni hech qachon 2 marta yubormaydi
     """
     logger.info("🟢 Barcha HR larni har 10 soniyada dinamik kuzatish fon sikli (hr_monitor_loop) ishga tushdi!")
 
@@ -265,17 +277,25 @@ async def hr_monitor_loop():
                     last_seen_id = hr.get("last_seen_msg_id") or 0
 
                     try:
-                        msgs = await c.get_messages(hr_username, limit=3)
+                        msgs = await c.get_messages(hr_username, limit=5)
                         if msgs:
-                            for msg in reversed(msgs):
-                                if not msg.out and msg.id > last_seen_id:
-                                    logger.info(f"🔎 HR @{hr_username} yangi xabar yozdi (msg.id: {msg.id} > {last_seen_id})!")
-                                    # Bazada zudlik bilan ID ni yangilaymiz
-                                    update_hr_last_msg(hr_username, msg.id, msg.text or "", status="replied")
-                                    last_seen_id = msg.id
+                            new_incoming = [m for m in reversed(msgs) if not m.out and m.id > last_seen_id]
+                            if new_incoming:
+                                max_id = max(m.id for m in new_incoming)
+                                cache_key = f"{hr_username}:{max_id}"
+                                if cache_key in handled_incoming_cache:
+                                    continue
+                                handled_incoming_cache.add(cache_key)
 
-                                    # Xabarni to'liq qayta ishlash
-                                    await handle_hr_incoming_message(hr_username, company, msg)
+                                text_parts = [m.text.strip() for m in new_incoming if m.text and m.text.strip()]
+                                combined_text = "\n".join(text_parts) if text_parts else "(Xabar matni yo'q)"
+                                latest_date = new_incoming[-1].date
+
+                                # Bazada DARHOL eng oxirgi ID bilan yangilaymiz
+                                update_hr_last_msg(hr_username, max_id, combined_text, status="replied")
+
+                                # Faqat 1 dona umumiy bildirishnoma
+                                await handle_hr_incoming_message(hr_username, company, combined_text, latest_date)
                     except Exception as e_hr:
                         logger.debug(f"HR @{hr_username} get_messages ogohlantirish: {e_hr}")
         except asyncio.CancelledError:
@@ -324,12 +344,17 @@ async def start_userbot():
                     hr_data = get_tracked_hr(phone)
 
                 if hr_data:
+                    hr_username = hr_data["username"].lstrip("@").lower().strip()
+                    company = hr_data.get("company", "")
                     last_seen_id = hr_data.get("last_seen_msg_id") or 0
                     if event.id > last_seen_id:
-                        hr_username = hr_data["username"].lstrip("@").lower().strip()
-                        company = hr_data.get("company", "")
+                        cache_key = f"{hr_username}:{event.id}"
+                        if cache_key in handled_incoming_cache:
+                            return
+                        handled_incoming_cache.add(cache_key)
+
                         update_hr_last_msg(hr_username, event.id, event.text or "", status="replied")
-                        await handle_hr_incoming_message(hr_username, company, event)
+                        await handle_hr_incoming_message(hr_username, company, event.text or "", event.date)
             except Exception as e_msg:
                 logger.error(f"Userbot xabarini qayta ishlashda xato: {e_msg}", exc_info=True)
 

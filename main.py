@@ -7,7 +7,7 @@ from fastapi import FastAPI, Request, BackgroundTasks
 from fastapi.responses import JSONResponse
 
 from config import PORT, MIN_MATCH_SCORE
-from database import init_db, is_vacancy_seen, mark_vacancy_seen
+from database import init_db, is_vacancy_seen, is_job_applied, mark_vacancy_seen, compute_content_hash
 from scraper import scrape_all_sources, is_potentially_relevant
 from ai_analyzer import batch_analyze_vacancies, get_last_error
 from notifier import notify_user_about_vacancies
@@ -46,14 +46,36 @@ async def run_vacancy_scan() -> int:
             raw_vacancies = await scrape_all_sources()
             logger.info(f"Jami {len(raw_vacancies)} ta xom e'lon yig'ildi.")
             
-            # 1. Python kalit so'zlari va ilgari ko'rilmaganligi bo'yicha birlamchi filtr
+            # 1. Qat'iy dublikat tekshiruvi: ko'rilmagan va topshirilmagan bo'lishi shart
             unseen_filtered = []
+            seen_hashes_in_scan = set()
+
             for item in raw_vacancies:
                 vac_id = item["id"]
-                if is_vacancy_seen(vac_id):
+                url = item.get("url", "")
+                title = item.get("title", "")
+                company = item.get("company", "")
+                raw_text = item.get("text", "")
+
+                content_hash = compute_content_hash(raw_text, title, company)
+                item["content_hash"] = content_hash
+
+                # a) Bitta skanerlash ichidagi dublikat
+                if content_hash in seen_hashes_in_scan:
                     continue
-                if not is_potentially_relevant(item["text"]):
+                seen_hashes_in_scan.add(content_hash)
+
+                # b) Avval ko'rilganmi (seen_vacancies)?
+                if is_vacancy_seen(vac_id, url=url, content_hash=content_hash, title=title, company=company):
                     continue
+
+                # c) Avval topshirilganmi (applied_jobs)?
+                if is_job_applied(vac_id, url=url, content_hash=content_hash, title=title, company=company):
+                    continue
+
+                if not is_potentially_relevant(raw_text):
+                    continue
+
                 unseen_filtered.append(item)
                 
             logger.info(f"Tahlil uchun {len(unseen_filtered)} ta yangi e'lon saralandi.")
@@ -99,7 +121,9 @@ async def run_vacancy_scan() -> int:
                     job_type=job_type,
                     raw_text=item.get("text", ""),
                     salary=analysis.get("salary", ""),
-                    posted_at=item.get("posted_at", "")
+                    red_flag=analysis.get("red_flag", ""),
+                    posted_at=item.get("posted_at", ""),
+                    content_hash=item.get("content_hash", "")
                 )
                 
                 # Agar talab qilingan minimal balldan yuqori bo'lsa
