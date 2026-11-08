@@ -346,7 +346,8 @@ async def notify_user_about_vacancies(matches: List[Dict[str, Any]]):
 
             # Inline tugmalar:
             # 1-qator: 📝 Matn + 📄 PDF Rezyume | 🎯 Suhbat savollari
-            # 2-qator: ✅ Topshirdim | 🔗 E'lonni ochish
+            # 2-qator: ✅ Topshirdim | ➕ HR'ni kuzatuvga olish
+            # 3-qator: 🔗 E'lonni ochish
             reply_markup = {
                 "inline_keyboard": [
                     [
@@ -355,6 +356,9 @@ async def notify_user_about_vacancies(matches: List[Dict[str, Any]]):
                     ],
                     [
                         {"text": "✅ Topshirdim", "callback_data": f"applied_{vac_id}"},
+                        {"text": "➕ HR'ni kuzatuvga olish", "callback_data": f"track_hr_{vac_id}"}
+                    ],
+                    [
                         {"text": "🔗 E'lonni ochish", "url": vac_url}
                     ]
                 ]

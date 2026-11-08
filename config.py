@@ -15,14 +15,14 @@ CALL_END_HOUR = int(os.getenv("CALL_END_HOUR", "20"))
 MAX_MATCHES_PER_SCAN = int(os.getenv("MAX_MATCHES_PER_SCAN", "10"))
 
 # Telegram Bot sozlamalari
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip().strip("'\"")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip().strip("'\"")
 
 # Telegram Userbot (Telethon) sozlamalari
-TELEGRAM_API_ID = int(os.getenv("TELEGRAM_API_ID", "0")) if os.getenv("TELEGRAM_API_ID") else None
-TELEGRAM_API_HASH = os.getenv("TELEGRAM_API_HASH", "")
-TELEGRAM_STRING_SESSION = os.getenv("TELEGRAM_STRING_SESSION", "")
-TELEGRAM_PHONE = os.getenv("TELEGRAM_PHONE", "")
+TELEGRAM_API_ID = int(os.getenv("TELEGRAM_API_ID", "0").strip().strip("'\"")) if os.getenv("TELEGRAM_API_ID") else None
+TELEGRAM_API_HASH = os.getenv("TELEGRAM_API_HASH", "").strip().strip("'\"")
+TELEGRAM_STRING_SESSION = os.getenv("TELEGRAM_STRING_SESSION", "").strip().strip("'\"")
+TELEGRAM_PHONE = os.getenv("TELEGRAM_PHONE", "").strip().strip("'\"")
 
 # Ma'lumotlar bazasi (PostgreSQL / Neon.tech yoki SQLite)
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
@@ -32,10 +32,10 @@ GOOGLE_SERVICE_ACCOUNT_JSON = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON", "").strip
 GOOGLE_CALENDAR_ID = os.getenv("GOOGLE_CALENDAR_ID", "primary").strip()
 
 # Google Gemini API kaliti
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 
 # CallMeBot qo'ng'iroq sozlamasi (masalan: @username)
-CALLMEBOT_USERNAME = os.getenv("CALLMEBOT_USERNAME", "")
+CALLMEBOT_USERNAME = os.getenv("CALLMEBOT_USERNAME", "").strip()
 
 # Minimal moslik bali (0-100 oralig'ida)
 MIN_MATCH_SCORE = int(os.getenv("MIN_MATCH_SCORE", "65"))
@@ -44,7 +44,7 @@ MIN_MATCH_SCORE = int(os.getenv("MIN_MATCH_SCORE", "65"))
 PORT = int(os.getenv("PORT", "8000"))
 
 # ElevenLabs Ovoz sozlamalari (Asosiy premium ovoz)
-ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "sk_d770ede4c9647d52c5c4282b536d6e62b86ef156e3a54a93").strip().strip('"').strip("'")
+ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "").strip().strip('"').strip("'")
 ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "cfWx14ZbaEUT4BjIA5tH").strip().strip('"').strip("'")
 ELEVENLABS_MODEL_ID = os.getenv("ELEVENLABS_MODEL_ID", "eleven_multilingual_v2").strip().strip('"').strip("'")
 

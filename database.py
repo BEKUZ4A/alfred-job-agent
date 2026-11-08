@@ -253,22 +253,39 @@ def get_top_vacancies(limit: int = 5, min_score: int = 50) -> List[Dict]:
 
 def add_tracked_hr(username: str, company: str = "", cal_event_3d: str = "", cal_event_7d: str = ""):
     username = username.strip().lstrip("@").lower()
-    if is_postgres():
-        execute_query("""
-        INSERT INTO tracked_hrs (username, company, cal_event_3d, cal_event_7d, status, last_seen_msg_id, last_updated)
-        VALUES (?, ?, ?, ?, 'waiting', 0, CURRENT_TIMESTAMP)
-        ON CONFLICT (username) DO UPDATE SET
-            company = EXCLUDED.company,
-            cal_event_3d = EXCLUDED.cal_event_3d,
-            cal_event_7d = EXCLUDED.cal_event_7d,
-            status = 'waiting',
-            last_updated = CURRENT_TIMESTAMP
-        """, (username, company, cal_event_3d, cal_event_7d), commit=True)
+    existing = get_tracked_hr(username)
+    if existing:
+        if is_postgres():
+            execute_query("""
+            UPDATE tracked_hrs 
+            SET company = COALESCE(NULLIF(?, ''), company),
+                status = 'waiting',
+                last_updated = CURRENT_TIMESTAMP
+            WHERE LOWER(username) = ?
+            """, (company, username), commit=True)
+        else:
+            execute_query("""
+            UPDATE tracked_hrs 
+            SET company = CASE WHEN ? != '' THEN ? ELSE company END,
+                status = 'waiting',
+                last_updated = CURRENT_TIMESTAMP
+            WHERE LOWER(username) = ?
+            """, (company, company, username), commit=True)
     else:
-        execute_query("""
-        INSERT OR REPLACE INTO tracked_hrs (username, company, cal_event_3d, cal_event_7d, status, last_seen_msg_id, last_updated)
-        VALUES (?, ?, ?, ?, 'waiting', 0, CURRENT_TIMESTAMP)
-        """, (username, company, cal_event_3d, cal_event_7d), commit=True)
+        if is_postgres():
+            execute_query("""
+            INSERT INTO tracked_hrs (username, company, cal_event_3d, cal_event_7d, status, last_seen_msg_id, last_updated)
+            VALUES (?, ?, ?, ?, 'waiting', 0, CURRENT_TIMESTAMP)
+            ON CONFLICT (username) DO UPDATE SET
+                company = EXCLUDED.company,
+                status = 'waiting',
+                last_updated = CURRENT_TIMESTAMP
+            """, (username, company, cal_event_3d, cal_event_7d), commit=True)
+        else:
+            execute_query("""
+            INSERT INTO tracked_hrs (username, company, cal_event_3d, cal_event_7d, status, last_seen_msg_id, last_updated)
+            VALUES (?, ?, ?, ?, 'waiting', 0, CURRENT_TIMESTAMP)
+            """, (username, company, cal_event_3d, cal_event_7d), commit=True)
 
 def update_hr_last_msg(username: str, msg_id: int, message_text: str = "", status: str = "replied"):
     """Telethon orqali kelgan yangi xabar ID si va matnini yangilash"""

@@ -488,6 +488,67 @@ async def process_telegram_update(update: Dict[str, Any], trigger_scan_callback=
                 )
             return
 
+        # 7. ➕ HR'ni kuzatuvga olish (Vakansiya ostidagi tugma)
+        if cb_data.startswith("track_hr_"):
+            vac_id = cb_data.replace("track_hr_", "")
+            vac = get_vacancy_by_id(vac_id)
+            if not vac:
+                await send_telegram_message("❌ Vakansiya ma'lumoti topilmadi.", chat_id=cb_chat_id)
+                return
+
+            company = vac.get("company", "")
+            raw_text = (vac.get("raw_text") or "") + " " + (vac.get("url") or "") + " " + (vac.get("title") or "")
+            hr_usernames = re.findall(r"@([a-zA-Z0-9_]{4,32})", raw_text)
+            
+            ignored_channels = [
+                "joblinkuz", "rizqimuz", "ish_kerak_toshkent_bormi_ishlar", "jobforjunior", 
+                "freelance_uzb", "young_june", "young_intern", "ustozshogird", "it_jobs_uz", "bbcnew_2026"
+            ]
+            candidate_hr = None
+            for u in hr_usernames:
+                if u.lower() not in ignored_channels:
+                    candidate_hr = u.lower().strip()
+                    break
+
+            if candidate_hr:
+                add_tracked_hr(candidate_hr, company=company)
+                await send_telegram_message(
+                    f"✅ <b>HR @{candidate_hr} ({company or 'Kompaniya'}) muvaffaqiyatli kuzatuvga olindi!</b>\n\n"
+                    f"• <b>Dinamik nazorat:</b> Telethon orqali har 10 soniyada tekshirib boriladi.\n"
+                    f"• HR sizga Telegram lichkangizda yozsa, darhol bildirishnoma yetkaziladi.\n"
+                    f"• Agar vaqt/uchrashuv belgilasa, darhol qo'ng'iroq va 15 min oldingi taymer yoqiladi!",
+                    chat_id=cb_chat_id
+                )
+            else:
+                await send_telegram_message(
+                    f"ℹ️ <b>Ushbu e'londan aniq HR username (@username) topilmadi.</b>\n\n"
+                    f"Iltimos, HR username'ni qo'lda qo'shing:\n"
+                    f"<code>/add_HR @username {company or 'Kompaniya'}</code>",
+                    chat_id=cb_chat_id
+                )
+            return
+
+        # 8. ✅ Tasdiqlash javobini HR'ga yuborish (Vaqt belgilanganda)
+        if cb_data.startswith("confirm_time_"):
+            hr_username = cb_data.replace("confirm_time_", "").strip().lstrip("@")
+            confirm_msg = (
+                "Assalomu alaykum! Taklif qilingan vaqt menga to'liq to'g'ri keladi. "
+                "Belgilangan vaqtda suhbatga tayyor bo'laman. Rahmat!"
+            )
+            sent = await send_message_as_user(hr_username, confirm_msg)
+            if sent:
+                await send_telegram_message(
+                    f"✅ <b>HR @{hr_username} ga tasdiqlash javobi shaxsiy Telegramingizdan yuborildi!</b>\n\n"
+                    f"<i>\"{confirm_msg}\"</i>",
+                    chat_id=cb_chat_id
+                )
+            else:
+                await send_telegram_message(
+                    f"❌ <b>HR @{hr_username} ga xabar yuborishda xatolik yuz berdi.</b> Userbot ulanishini tekshiring.",
+                    chat_id=cb_chat_id
+                )
+            return
+
     message = update.get("message")
     if not message:
         return
@@ -617,12 +678,17 @@ async def process_telegram_update(update: Dict[str, Any], trigger_scan_callback=
 
     # 3.15. /hr_list buyrug'i (Kuzatuvdagi barcha HR lar va Userbot holati)
     if text and text in ["/hr_list", "/hrs", "hr_list"]:
-        from userbot import is_userbot_connected
+        from userbot import is_userbot_connected, get_userbot_me
+        is_conn = is_userbot_connected()
+        me = await get_userbot_me()
+        me_info = f" (@{me.username})" if me and me.username else ""
         tracked = get_all_tracked_hrs()
-        userbot_status = "🟢 Faol (Ulangan)" if is_userbot_connected() else "🟡 Kutish rejimida"
-        msg = f"👥 <b>Kuzatuvdagi HR lar va Userbot Holati:</b>\n\n"
-        msg += f"⚡ <b>Telethon Userbot:</b> {userbot_status}\n"
-        msg += f"📊 <b>Kuzatuvdagi HR lar soni:</b> {len(tracked)}\n\n"
+
+        msg = (
+            f"⚡ <b>Telethon Userbot Holati:</b> {'🟢 Ulangan' if is_conn else '🔴 Ulanmagan'}{me_info}\n"
+            f"<b>Userbot Connected:</b> <code>{is_conn}</code>\n\n"
+            f"👥 <b>Kuzatilayotgan BARCHA HR'lar soni:</b> {len(tracked)} ta\n\n"
+        )
         if tracked:
             for idx, h in enumerate(tracked, 1):
                 status_icon = "⏳ Kutilyapti"
@@ -633,16 +699,37 @@ async def process_telegram_update(update: Dict[str, Any], trigger_scan_callback=
                     status_icon = "⏰ 3 kunlik eslatma berilgan"
                 elif st == "prompted_delete":
                     status_icon = "⚠️ 7 kun o'tgan"
-                
+
                 u = h.get("username", "")
                 c = h.get("company") or "Kompaniya ko'rsatilmagan"
                 dt = str(h.get("added_at", ""))[:16]
                 last_m = h.get("last_message", "")
-                last_preview = f"\n   💬 <i>\"{last_m[:60]}...\"</i>" if last_m else ""
-                msg += f"{idx}. <b>@{u}</b> ({c}) — {status_icon}\n   📅 Qo'shildi: <i>{dt}</i>{last_preview}\n\n"
+                last_id = h.get("last_seen_msg_id", 0)
+                last_preview = f"\n   💬 <i>\"{last_m[:50]}...\"</i>" if last_m else ""
+                msg += f"{idx}. <b>@{u}</b> ({c}) — {status_icon}\n   📅 Qo'shildi: <i>{dt}</i> | Xabar ID: {last_id}{last_preview}\n\n"
+            msg += "<i>Kuzatuvdan o'chirish:</i> <code>/remove_HR @username</code>"
         else:
-            msg += "<i>Hozircha birorta HR kuzatuvga olinmagan.\nQo'shish:</i> <code>/add_HR @username Kompaniya</code>"
+            msg += "<i>Hozircha birorta HR kuzatuvga olinmagan.\nQo'shish:</i> <code>/add_HR @username [Kompaniya]</code>"
         await send_telegram_message(msg, chat_id=chat_id)
+        return
+
+    # 3.16. /remove_HR @username buyrug'i
+    if text and (text.startswith("/remove_HR") or text.startswith("/remove_hr") or text.startswith("/del_hr")):
+        parts = text.split()
+        if len(parts) < 2:
+            await send_telegram_message(
+                "ℹ️ <b>Foydalanish:</b> <code>/remove_HR @username</code>\n"
+                "<i>Masalan:</i> <code>/remove_HR @recruiter_user</code>",
+                chat_id=chat_id
+            )
+            return
+
+        hr_user = parts[1].strip().lstrip("@").lower()
+        delete_tracked_hr(hr_user)
+        await send_telegram_message(
+            f"🗑 <b>HR @{hr_user} kuzatuv ro'yxatidan muvaffaqiyatli o'chirildi!</b>",
+            chat_id=chat_id
+        )
         return
 
     # 3.2. /my_jobs buyrug'i (Topshirilgan ishlar Mini-CRM)
@@ -964,6 +1051,9 @@ async def process_telegram_update(update: Dict[str, Any], trigger_scan_callback=
                     ],
                     [
                         {"text": "✅ Topshirdim", "callback_data": f"applied_{vac_id}"},
+                        {"text": "➕ HR'ni kuzatuvga olish", "callback_data": f"track_hr_{vac_id}"}
+                    ],
+                    [
                         {"text": "🔗 E'lonni ochish", "url": vac_url}
                     ]
                 ]
