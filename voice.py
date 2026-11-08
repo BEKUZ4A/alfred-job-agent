@@ -151,11 +151,11 @@ def save_pcm_to_audio_file(pcm_bytes: bytes, sample_rate: int = 24000) -> str:
         wf.writeframes(pcm_bytes)
     return wav_path
 
-async def generate_elevenlabs_tts(clean_text: str) -> Optional[str]:
+async def generate_elevenlabs_tts(clean_text: str, voice_id: Optional[str] = None) -> Optional[str]:
     """
     ASOSIY OVOZ: ElevenLabs Multilingual V2 API
     - Model: eleven_multilingual_v2
-    - Ovoz ID: cfWx14ZbaEUT4BjIA5tH (yoki ELEVENLABS_VOICE_ID)
+    - Ovoz ID: GChwNsPvTsqD6tAAORVU (yoki ELEVENLABS_VOICE_ID)
     - Fonetik transkripsiya bilan to'ldirilgan (Payton, Jango, Fast Ey-Pi-Ay)
     - Chiqish: Toza Telegram Voice (.ogg Opus) format
     """
@@ -166,7 +166,7 @@ async def generate_elevenlabs_tts(clean_text: str) -> Optional[str]:
     # Ovoz aniq va ravon chiqishi uchun fonetik transkripsiyalash
     phonetic_text = phonetic_normalize_for_tts(clean_text)
 
-    voice_id = ELEVENLABS_VOICE_ID or "cfWx14ZbaEUT4BjIA5tH"
+    target_voice_id = voice_id or ELEVENLABS_VOICE_ID or "GChwNsPvTsqD6tAAORVU"
     model_id = ELEVENLABS_MODEL_ID or "eleven_multilingual_v2"
 
     temp_dir = tempfile.gettempdir()
@@ -183,7 +183,7 @@ async def generate_elevenlabs_tts(clean_text: str) -> Optional[str]:
             pcm_bytes = None
             try:
                 audio_stream = client.text_to_speech.convert(
-                    voice_id=voice_id,
+                    voice_id=target_voice_id,
                     text=phonetic_text,
                     model_id=model_id,
                     voice_settings=settings,
@@ -335,7 +335,7 @@ async def generate_gemini_tts(clean_text: str) -> Optional[str]:
 
     return None
 
-async def generate_voice_message(text: str, prepare_script: bool = True) -> str:
+async def generate_voice_message(text: str, prepare_script: bool = True, voice_id: Optional[str] = None) -> str:
     """
     Asosiy funksiya: Matnni tabiiy, yoqimli ovozli xabarga aylantirish.
     1. Matnni Gemini orqali do'stona 3-4 gapdan iborat toza so'zlashuv nutqiga aylantiradi.
@@ -378,7 +378,7 @@ async def generate_voice_message(text: str, prepare_script: bool = True) -> str:
         )
 
     # 3. 1-BOSQICH: ElevenLabs Multilingual V2 (Asosiy ovoz, toza Telegram Voice .ogg)
-    eleven_audio = await generate_elevenlabs_tts(clean_text)
+    eleven_audio = await generate_elevenlabs_tts(clean_text, voice_id=voice_id)
     if eleven_audio:
         return eleven_audio
 

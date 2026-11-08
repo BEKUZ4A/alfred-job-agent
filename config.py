@@ -45,7 +45,7 @@ PORT = int(os.getenv("PORT", "8000"))
 
 # ElevenLabs Ovoz sozlamalari (Asosiy premium ovoz)
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "").strip().strip('"').strip("'")
-ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "cfWx14ZbaEUT4BjIA5tH").strip().strip('"').strip("'")
+ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "GChwNsPvTsqD6tAAORVU").strip().strip('"').strip("'")
 ELEVENLABS_MODEL_ID = os.getenv("ELEVENLABS_MODEL_ID", "eleven_multilingual_v2").strip().strip('"').strip("'")
 
 # Gemini Native Audio TTS sozlamalari (Zaxira tabiiy ovoz)

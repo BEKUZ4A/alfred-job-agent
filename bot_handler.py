@@ -51,7 +51,7 @@ from database import (
     get_hr_pending_reply
 )
 from pdf_generator import generate_pdf_resume
-from userbot import delete_hr_dialog, send_message_as_user
+from userbot import delete_hr_dialog, send_message_as_user, sync_hr_last_seen_silently
 from voice import generate_voice_message
 
 logger = logging.getLogger("Alfred.BotHandler")
@@ -573,11 +573,12 @@ async def process_telegram_update(update: Dict[str, Any], trigger_scan_callback=
 
             if candidate_hr:
                 add_tracked_hr(candidate_hr, company=company)
+                asyncio.create_task(sync_hr_last_seen_silently(candidate_hr))
                 await send_telegram_message(
                     f"✅ <b>HR @{candidate_hr} ({company or 'Kompaniya'}) muvaffaqiyatli kuzatuvga olindi!</b>\n\n"
                     f"• <b>Dinamik nazorat:</b> Telethon orqali har 10 soniyada tekshirib boriladi.\n"
                     f"• HR sizga Telegram lichkangizda yozsa, darhol bildirishnoma yetkaziladi.\n"
-                    f"• Agar vaqt/uchrashuv belgilasa, darhol qo'ng'iroq va 15 min oldingi taymer yoqiladi!",
+                    f"• Agar vaqt/uchrashuv belgilasa, darhol qo'ng'iroq va 2 daqiqa oldingi taymer yoqiladi!",
                     chat_id=cb_chat_id
                 )
             else:
@@ -592,7 +593,7 @@ async def process_telegram_update(update: Dict[str, Any], trigger_scan_callback=
         # 8. ✅ Tasdiqlash javobini HR'ga yuborish (Vaqt belgilanganda)
         if cb_data.startswith("confirm_time_"):
             hr_username = cb_data.replace("confirm_time_", "").strip().lstrip("@")
-            confirm_msg = (
+            confirm_msg = get_hr_pending_reply(hr_username) or (
                 "Assalomu alaykum! Taklif qilingan vaqt menga to'liq to'g'ri keladi. "
                 "Belgilangan vaqtda suhbatga tayyor bo'laman. Rahmat!"
             )
@@ -613,6 +614,31 @@ async def process_telegram_update(update: Dict[str, Any], trigger_scan_callback=
             else:
                 await send_telegram_message(
                     f"❌ <b>HR @{hr_username} ga xabar yuborishda xatolik yuz berdi.</b> Userbot ulanishini tekshiring.",
+                    chat_id=cb_chat_id
+                )
+            return
+
+        # 9. ✅ "Tayyorman" deb HR'ga yuborish (2 daqiqa oldin keladigan tugma)
+        if cb_data.startswith("send_ready_"):
+            hr_username = cb_data.replace("send_ready_", "").strip().lstrip("@")
+            ready_msg = "Assalomu alaykum! Men suhbatga tayyorman, aloqadaman."
+            sent = await send_message_as_user(hr_username, ready_msg)
+            if sent:
+                cb_msg_id = cb_query.get("message", {}).get("message_id")
+                if cb_msg_id:
+                    await edit_telegram_reply_markup(cb_chat_id, cb_msg_id, {
+                        "inline_keyboard": [
+                            [{"text": "☑️ \"Tayyorman\" yuborildi", "callback_data": "noop_hr_sent"}]
+                        ]
+                    })
+                await send_telegram_message(
+                    f"✅ <b>HR @{hr_username} ga \"Tayyorman\" deb xabar yuborildi!</b>\n\n"
+                    f"<i>\"{ready_msg}\"</i>",
+                    chat_id=cb_chat_id
+                )
+            else:
+                await send_telegram_message(
+                    f"❌ <b>HR @{hr_username} ga xabar yuborishda xatolik yuz berdi.</b> Userbot holatini tekshiring.",
                     chat_id=cb_chat_id
                 )
             return
@@ -735,6 +761,7 @@ async def process_telegram_update(update: Dict[str, Any], trigger_scan_callback=
 
         # Bazaga saqlash
         add_tracked_hr(hr_user, company=company)
+        asyncio.create_task(sync_hr_last_seen_silently(hr_user))
 
         resp_text = (
             f"✅ <b>HR @{hr_user} ({company or 'Kompaniya'}) kuzatuvga olindi!</b>\n\n"
