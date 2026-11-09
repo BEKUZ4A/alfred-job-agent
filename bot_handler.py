@@ -14,6 +14,7 @@ from ai_analyzer import (
     generate_tailored_resume_and_pitch,
     generate_interview_prep,
     analyze_hr_message,
+    analyze_user_hr_dialogue,
     generate_hr_followup
 )
 from notifier import (
@@ -51,7 +52,14 @@ from database import (
     get_hr_pending_reply
 )
 from pdf_generator import generate_pdf_resume
-from userbot import delete_hr_dialog, send_message_as_user, sync_hr_last_seen_silently
+from userbot import (
+    delete_hr_dialog, 
+    send_message_as_user, 
+    sync_hr_last_seen_silently,
+    get_hr_chat_history,
+    schedule_2min_reminder,
+    parse_meeting_time
+)
 from voice import generate_voice_message
 
 logger = logging.getLogger("Alfred.BotHandler")
@@ -366,6 +374,138 @@ async def ensure_real_vacancies(limit: int = 5) -> List[Dict]:
         logger.error(f"ensure_real_vacancies xatoligi: {e}")
         
     return vacs
+
+async def handle_user_hr_discussion(message: Dict[str, Any], chat_id: str) -> bool:
+    """
+    Foydalanuvchi botda HR xabariga Reply qilganda yoki 'HR bilan gaplashdim / vaqtini aniqqil' deganda:
+    1. Hech qachon vakansiyalar bazasidan (SberTech, Popcorn TV) qidirmaslik!
+    2. Reply qilingan xabardan yoki xabar matnidan @username ni (yoki tracked_hrs dagi oxirgi HR ni) aniqlash.
+    3. Telethon orqali shu HR bilan bo'lgan oxirgi 15 ta xabarni jonli o'qish.
+    4. Kelishilgan suhbat vaqtini aniqlash, 2 daqiqa oldin taymer qo'yish va botda aniq tasdiq chiqarish.
+    """
+    text = (message.get("text") or message.get("caption") or "").strip()
+    reply_to = message.get("reply_to_message")
+    reply_text = ((reply_to.get("text") or reply_to.get("caption") or "") if reply_to else "").strip()
+
+    lower_text = text.lower()
+    lower_reply = reply_text.lower()
+
+    # Trigger shartlari:
+    # 1. Reply qilingan xabarda HR yoki suhbat / uchrashuv / @ belgisi bo'lsa
+    is_reply_to_hr = bool(reply_to and any(w in lower_reply for w in ["hr", "suhbat", "@", "belgilandi", "xabar yozdi"]))
+
+    # 2. Xabarda aniq kalit iboralar bo'lsa
+    direct_phrases = [
+        "gaplashdim", "vaqtini aniqqil", "vaqtini aniqla", "vaqtini bil", 
+        "kelishdik", "kelishdim", "vaqtni aniqla", "vaqtni aniqqil",
+        "suhbat vaqti", "intervyu vaqti", "suhbat vaqtini", "soat nechada"
+    ]
+    has_direct_phrase = any(phrase in lower_text for phrase in direct_phrases)
+
+    # 3. HR va vaqt/suhbat/gaplashuv so'zlari kombinatsiyasi
+    has_hr_mention = any(w in lower_text for w in ["hr", "@", "lichka"]) and any(
+        w in lower_text for w in ["gaplash", "vaqt", "suhbat", "intervyu", "kelish", "aniq", "yozdim", "yozishdim", "tekshir"]
+    )
+
+    if not (is_reply_to_hr or has_direct_phrase or has_hr_mention):
+        return False
+
+    ignored_usernames = {
+        "joblinkuz", "rizqimuz", "ish_kerak_toshkent_bormi_ishlar", "jobforjunior", 
+        "freelance_uzb", "young_june", "young_intern", "ustozshogird", "it_jobs_uz", 
+        "bbcnew_2026", "callmebot"
+    }
+
+    target_hr = None
+    target_company = ""
+
+    # a) Reply matnidan @username
+    if reply_text:
+        matches = re.findall(r"@([a-zA-Z0-9_]{3,32})", reply_text)
+        for u in matches:
+            if u.lower() not in ignored_usernames:
+                target_hr = u.lower().strip()
+                break
+
+    # b) Foydalanuvchi matnidan @username
+    if not target_hr and text:
+        matches = re.findall(r"@([a-zA-Z0-9_]{3,32})", text)
+        for u in matches:
+            if u.lower() not in ignored_usernames:
+                target_hr = u.lower().strip()
+                break
+
+    # c) Agar topilmasa, bazadagi tracked_hrs dan eng so'nggi faolini olish (masalan: itlive_hr)
+    all_tracked = get_all_tracked_hrs()
+    if not target_hr and all_tracked:
+        sorted_hrs = sorted(all_tracked, key=lambda x: (x.get("last_seen_msg_id") or 0, x.get("added_at") or ""), reverse=True)
+        target_hr = sorted_hrs[0].get("username", "").lstrip("@").lower().strip()
+        target_company = sorted_hrs[0].get("company", "")
+
+    if not target_hr:
+        await send_telegram_message(
+            "⚠️ <b>Kuzatuvda birorta ham HR topilmadi!</b>\n\n"
+            "Iltimos, avval <code>/add_HR @username Kompaniya</code> orqali HR ni kuzatuvga oling.",
+            chat_id=chat_id
+        )
+        return True
+
+    # Kompaniyani olish
+    hr_info = get_tracked_hr(target_hr)
+    if hr_info and hr_info.get("company"):
+        target_company = hr_info.get("company", "")
+
+    # Telethon orqali shaxsiy lichkani o'qish (oxirgi 15 ta xabar)
+    chat_history = await get_hr_chat_history(target_hr, limit=15)
+    if not chat_history:
+        await send_telegram_message(
+            f"⚠️ <b>HR @{target_hr} bilan shaxsiy Telegramingizda yozishmalar topilmadi yoki Userbot ulanmagan.</b>\n"
+            "Iltimos, Userbot faolligini va ushbu HR bilan Telegramda muloqot bo'lganligini tekshiring.",
+            chat_id=chat_id
+        )
+        return True
+
+    analysis = await analyze_user_hr_dialogue(chat_history, target_hr, target_company)
+    has_agreed = analysis.get("has_agreed_time", False)
+    exact_time_display = analysis.get("exact_time_display", "")
+    target_iso = analysis.get("target_iso", "")
+    last_agreement = analysis.get("last_agreement", "")
+    summary = analysis.get("summary", "")
+
+    if has_agreed and exact_time_display:
+        target_dt = None
+        if target_iso:
+            try:
+                target_dt = datetime.fromisoformat(target_iso)
+            except Exception:
+                pass
+        if not target_dt:
+            target_dt, _ = parse_meeting_time(last_agreement or text)
+
+        if target_dt:
+            await schedule_2min_reminder(target_dt, target_hr, target_company, exact_time_display)
+
+        await send_telegram_message(
+            f"📅 <b>@{target_hr} bilan yozishmangizni tekshirdim!</b>\n\n"
+            f"💬 Oxirgi kelishuv: <i>\"{last_agreement}\"</i>\n"
+            f"⏰ <b>Belgilangan suhbat vaqti:</b> <b>{exact_time_display}</b>\n\n"
+            f"🔔 <b>Suhbatga 2 daqiqa qolganda sizga qo'ng'iroq qilaman!</b>",
+            chat_id=chat_id
+        )
+    else:
+        recent_previews = []
+        for m in chat_history[-2:]:
+            recent_previews.append(f"{m['sender']}: {m['text'][:80]}")
+        dialogue_preview = " | ".join(recent_previews) if recent_previews else last_agreement
+
+        await send_telegram_message(
+            f"📅 <b>@{target_hr} bilan yozishmangizni tekshirdim!</b>\n\n"
+            f"💬 Oxirgi yozishmalar: <i>\"{dialogue_preview}\"</i>\n"
+            f"ℹ️ <b>Holat:</b> {summary or 'Hali aniq suhbat soati kelishilmagan.'}\n\n"
+            f"🔔 <i>HR aniq vaqt taklif qilganda yoki siz vaqtga kelishganingizda avtomatik eslatma va qo'ng'iroq qo'yiladi.</i>",
+            chat_id=chat_id
+        )
+    return True
 
 async def process_telegram_update(update: Dict[str, Any], trigger_scan_callback=None):
     """Telegramdan kelgan yangilanishlarni (matn, ovozli xabarlar va tugma bosilishlarini) qayta ishlash"""
@@ -1073,6 +1213,12 @@ async def process_telegram_update(update: Dict[str, Any], trigger_scan_callback=
             chat_id=chat_id
         )
         return
+
+    # 6.9. HR bilan muloqot va vaqtni aniqlash so'rovi (Reply yoki 'HR bilan gaplashdim / vaqtini aniqqil')
+    if text:
+        handled_hr = await handle_user_hr_discussion(message, chat_id=chat_id)
+        if handled_hr:
+            return
 
     # 7. Oddiy matnli yoki ovozli so'rov bo'lsa (Gemini orqali suhbat, vakansiyalar tahlili va ovozli javob)
     if text:

@@ -1,6 +1,7 @@
 import httpx
 import urllib.parse
 import os
+import re
 import logging
 import asyncio
 from datetime import datetime, timezone
@@ -108,12 +109,44 @@ async def make_call(text: str = "Sizga mos yangi vakansiya chiqdi", force: bool 
         logger.error(f"make_call da kutilmagan xatolik: {e}")
         return False
 
+def markdown_to_telegram_html(text: str) -> str:
+    """
+    Markdown sintaksisini Telegram HTML formatiga xavfsiz o'girish:
+    - **qalin matn** -> <b>qalin matn</b>
+    - `kod` -> <code>kod</code>
+    - ```kod``` -> <pre>kod</pre>
+    - [Nom](havola) -> <a href="havola">Nom</a>
+    - *kursiv* -> <i>kursiv</i>
+    """
+    if not text:
+        return ""
+    try:
+        # Pre code blocks: ```lang\ncode\n```
+        text = re.sub(r"```(?:[a-zA-Z0-9_\-]+)?\n?(.*?)```", r"<pre>\1</pre>", text, flags=re.DOTALL)
+        # Inline code: `code`
+        text = re.sub(r"`([^`\n]+)`", r"<code>\1</code>", text)
+        # Bold: **bold** or __bold__
+        text = re.sub(r"\*\*([^\*\n]+)\*\*", r"<b>\1</b>", text)
+        text = re.sub(r"__([^_\n]+)__", r"<b>\1</b>", text)
+        # Markdown headers: ### Header
+        text = re.sub(r"^[ \t]*#{1,6}[ \t]+([^\n]+)", r"<b>\1</b>", text, flags=re.MULTILINE)
+        # Markdown links: [Title](https://...)
+        text = re.sub(r"\[([^\]]+)\]\((https?://[^\)]+)\)", r'<a href="\2">\1</a>', text)
+        # Italic: *italic* (oddiy matn ichidagi kursiv)
+        text = re.sub(r"(?<![\*\w])\*([^\*\n]+)\*(?![\*\w])", r"<i>\1</i>", text)
+    except Exception:
+        pass
+    return text
+
 async def send_telegram_message(text: str, reply_markup: Optional[Dict] = None, chat_id: str = "") -> bool:
     """Telegram bot orqali matnli xabar yuborish (uzun matnlarni 3900 belgidan bo'laklab yuboradi)"""
     target_chat_id = chat_id or TELEGRAM_CHAT_ID
     if not TELEGRAM_BOT_TOKEN or not target_chat_id:
         logger.warning("Telegram Bot Token yoki Chat ID sozlanmagan!")
         return False
+
+    # Markdown formatlarni Telegram HTML teglariga avtomatik o'girish
+    text = markdown_to_telegram_html(text)
         
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     
@@ -175,12 +208,13 @@ async def send_telegram_voice(file_path: str, caption: str = "", chat_id: str = 
     mime_type = "audio/ogg" if file_path.endswith(".ogg") else ("audio/wav" if file_path.endswith(".wav") else "audio/mpeg")
 
     try:
+        clean_caption = markdown_to_telegram_html(caption)
         async with httpx.AsyncClient(timeout=35) as client:
             with open(file_path, "rb") as f:
                 files = {"voice": (os.path.basename(file_path), f, mime_type)}
                 data = {
                     "chat_id": target_chat_id,
-                    "caption": caption[:1024],
+                    "caption": clean_caption[:1024],
                     "parse_mode": "HTML"
                 }
                 resp = await client.post(url, data=data, files=files)

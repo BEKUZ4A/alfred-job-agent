@@ -196,7 +196,87 @@ async def sync_hr_last_seen_silently(hr_username: str) -> Optional[int]:
         logger.debug(f"HR @{hr_username} boshlang'ich ID ni olishda xato: {e}")
     return None
 
-async def handle_hr_incoming_message(hr_username: str, company: str, message_text: str, msg_date: Any):
+async def get_hr_chat_history(hr_username: str, limit: int = 15) -> List[Dict[str, Any]]:
+    """
+    Telethon orqali shu HR bilan bo'lgan oxirgi `limit` ta xabarni o'qish (ham IN, ham OUT).
+    Xronologik tartibda (eskilardan yangisiga qarab) qaytaradi.
+    """
+    c = get_userbot_client()
+    if not c or not c.is_connected() or not await c.is_user_authorized():
+        return []
+    try:
+        username_clean = hr_username.strip().lstrip("@")
+        messages = await c.get_messages(username_clean, limit=limit)
+        result = []
+        for m in reversed(messages):
+            if not m.text:
+                continue
+            sender = "Behruzbek" if m.out else f"HR (@{username_clean})"
+            time_str = format_message_time(m.date)
+            result.append({
+                "id": m.id,
+                "out": bool(m.out),
+                "sender": sender,
+                "text": m.text,
+                "date": m.date,
+                "time_str": time_str
+            })
+        return result
+    except Exception as e:
+        logger.error(f"HR @{hr_username} yozishmalar tarixini olishda xato: {e}")
+        return []
+
+async def handle_hr_outgoing_message(
+    hr_username: str, 
+    company: str, 
+    message_text: str, 
+    msg_date: Any,
+    chat_history: Optional[List[Dict[str, Any]]] = None
+):
+    """
+    Behruzbek o'zi shaxsiy Telegramida HR ga xabar yozganda (msg.out == True):
+    Telethon orqali oxirgi 15 ta yozishmani tahlil qilib, suhbat vaqti kelishilganini aniqlash.
+    Agar kelishilgan bo'lsa, 2 daqiqa oldin taymer qo'yish va bot orqali tasdiq xabari yuborish.
+    """
+    from notifier import send_telegram_message
+    from ai_analyzer import analyze_user_hr_dialogue
+
+    if chat_history is None:
+        chat_history = await get_hr_chat_history(hr_username, limit=15)
+
+    analysis = await analyze_user_hr_dialogue(chat_history, hr_username, company)
+    has_agreed = analysis.get("has_agreed_time", False)
+    exact_time_display = analysis.get("exact_time_display", "")
+    target_iso = analysis.get("target_iso", "")
+    last_agreement = analysis.get("last_agreement", "")
+
+    if has_agreed and exact_time_display:
+        logger.info(f"🤝 Behruzbek va HR @{hr_username} suhbat vaqtiga kelishdi: {exact_time_display}")
+        target_dt = None
+        if target_iso:
+            try:
+                target_dt = datetime.fromisoformat(target_iso)
+            except Exception:
+                pass
+        if not target_dt:
+            target_dt, _ = parse_meeting_time(last_agreement or message_text)
+
+        if target_dt:
+            await schedule_2min_reminder(target_dt, hr_username, company, exact_time_display)
+
+        await send_telegram_message(
+            f"✅ <b>Siz HR (@{hr_username}) bilan o'zingiz gaplashib, suhbatni soat {exact_time_display} ga kelishdingiz! 2 daqiqa qolganda qo'ng'iroq qilaman.</b>\n\n"
+            f"💬 <b>Oxirgi kelishuv:</b> <i>\"{last_agreement or message_text}\"</i>\n"
+            f"🏢 <b>Kompaniya:</b> {company or 'Kompaniya'}"
+        )
+
+async def handle_hr_incoming_message(
+    hr_username: str, 
+    company: str, 
+    message_text: str, 
+    msg_date: Any,
+    chat_history: Optional[List[Dict[str, Any]]] = None
+):
     """
     Kuzatuvdagi HR dan yangi xabar kelganda FAQAT 1 TA bildirishnoma yuborish:
     1. Agar aniq suhbat soati aytilgan bo'lsa: 1 ta xabar + qo'ng'iroq + ovoz + 15 min oldingi taymer + [✅ Tasdiqlash javobini HR'ga yuborish]
@@ -210,7 +290,9 @@ async def handle_hr_incoming_message(hr_username: str, company: str, message_tex
     from voice import generate_voice_message
     from database import update_hr_pending_reply
 
-    analysis = await analyze_hr_message(message_text, hr_username, company)
+    if chat_history is None:
+        chat_history = await get_hr_chat_history(hr_username, limit=15)
+    analysis = await analyze_hr_message(message_text, hr_username, company, chat_history=chat_history)
     has_exact_time = analysis.get("has_exact_time", False)
     exact_time_display = analysis.get("exact_time_display", "")
     suggested_reply = analysis.get("suggested_reply", "")
@@ -312,7 +394,7 @@ async def hr_monitor_loop():
                         msgs = await c.get_messages(hr_username, limit=1)
                         if msgs:
                             msg = msgs[0]
-                            if not msg.out and msg.id > last_seen_id:
+                            if msg.id > last_seen_id:
                                 async with hr_lock:
                                     hr_fresh = get_tracked_hr(hr_username)
                                     fresh_last_seen = (hr_fresh.get("last_seen_msg_id") if hr_fresh else 0) or 0
@@ -321,7 +403,10 @@ async def hr_monitor_loop():
                                     # Xabar va ovozdan OLDIN DARHOL bazani yangilaymiz
                                     update_hr_last_msg(hr_username, msg.id, msg.text or "", status="replied")
 
-                                await handle_hr_incoming_message(hr_username, company, msg.text or "(Xabar matni yo'q)", msg.date)
+                                if not msg.out:
+                                    await handle_hr_incoming_message(hr_username, company, msg.text or "(Xabar matni yo'q)", msg.date)
+                                else:
+                                    await handle_hr_outgoing_message(hr_username, company, msg.text or "", msg.date)
                     except Exception as e_hr:
                         logger.debug(f"HR @{hr_username} get_messages ogohlantirish: {e_hr}")
         except asyncio.CancelledError:
@@ -363,16 +448,13 @@ async def start_userbot():
         except Exception as e_sync:
             logger.debug(f"Userbot startup HR sync ogohlantirish: {e_sync}")
 
-        # Jonli kuzatuv (Incoming private messages)
-        @c.on(events.NewMessage(incoming=True, func=lambda e: e.is_private))
-        async def incoming_private_message_handler(event):
+        # Jonli kuzatuv (Incoming va Outgoing private messages)
+        @c.on(events.NewMessage(func=lambda e: e.is_private))
+        async def private_message_handler(event):
             try:
-                sender = await event.get_sender()
-                if not isinstance(sender, User):
-                    return
-
-                username = (sender.username or "").lower().strip().lstrip("@")
-                phone = (sender.phone or "").strip()
+                chat = await event.get_chat()
+                username = (getattr(chat, "username", "") or "").lower().strip().lstrip("@")
+                phone = (getattr(chat, "phone", "") or "").strip()
 
                 hr_data = None
                 if username:
@@ -393,7 +475,10 @@ async def start_userbot():
                             # Xabar va ovozdan OLDIN DARHOL bazani yangilaymiz
                             update_hr_last_msg(hr_username, event.id, event.text or "", status="replied")
 
-                        await handle_hr_incoming_message(hr_username, company, event.text or "", event.date)
+                        if not event.out:
+                            await handle_hr_incoming_message(hr_username, company, event.text or "", event.date)
+                        else:
+                            await handle_hr_outgoing_message(hr_username, company, event.text or "", event.date)
             except Exception as e_msg:
                 logger.error(f"Userbot xabarini qayta ishlashda xato: {e_msg}", exc_info=True)
 

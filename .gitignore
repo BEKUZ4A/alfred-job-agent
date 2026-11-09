@@ -8,6 +8,7 @@ seen_vacancies.db
 *.session
 *.session-journal
 .telethon_temp.json
+.caller_temp.json
 *.pdf
 *.mp3
 *.ogg

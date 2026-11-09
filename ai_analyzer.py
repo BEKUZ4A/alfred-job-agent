@@ -250,7 +250,8 @@ MULOQOT VA FORMATLASH QOIDALARI:
 
 YOLG'ON VAKANSIYA TO'QISHNI QAT'IY TAQIQLASH (ANTI-HALLUCINATION):
 - HECH QACHON o'zingdan vakansiya, kompaniya, maosh yoki buyurtma to'qib chiqarma!
-- Faqat va faqat quyidagi BAZADAGI REAL VAKANSIYALAR bo'limida berilgan haqiqiy ma'lumotlar haqida gapir.
+- Faqat va faqat foydalanuvchi vakansiyalar haqida so'raganda quyidagi BAZADAGI REAL VAKANSIYALAR bo'limida berilgan haqiqiy ma'lumotlar haqida gapir.
+- Agar foydalanuvchi boshqa mavzularda, maslahat yoki bot haqida umumiy gapirsa, unga vakansiyalarni majburan tiqishtirmasdan, uning gapiga to'g'ridan-to'g'ri samimiy javob ber!
 - Agar foydalanuvchi vakansiyalar haqida so'rasa, lekin berilgan kontekstda vakansiyalar bo'lmasa yoki bo'sh bo'lsa:
   Ochiqchasiga: "Hozircha bazada yangi mos vakansiya topilmadi, /scan bosib yangi e'lonlarni qidirib ko'ring." deb ayt!
 - Agar real vakansiya haqida gapirayotgan bo'lsang, xabar ichida ALBATTA:
@@ -494,52 +495,74 @@ async def generate_interview_prep(vacancy_text: str) -> str:
         return res.strip()
     return "❌ <i>Suhbat savollarini generatsiya qilishda xatolik yuz berdi. Qayta urinib ko'ring.</i>"
 
-async def analyze_hr_message(message_text: str, hr_username: str, company: str = "") -> Dict[str, Any]:
+async def analyze_hr_message(
+    message_text: str, 
+    hr_username: str, 
+    company: str = "",
+    chat_history: Optional[List[Dict[str, Any]]] = None
+) -> Dict[str, Any]:
     """
     HR yozgan xabarni aqlli tahlil qilish (QAT'IY QOIDALAR):
-    1. ANIQ SOAT/UCHRASHUV VAQTI BELGILANGANMI:
-       - has_exact_time: true FAQAT xabarda aniq soat/daqiqa (14:00, 15:30, soat 3 da, 11:00 da) bo'lsagina.
-       - "Bugun vaqtingiz bormi?", "Salom", "Tajribangiz qancha?" kabi savollarga has_exact_time: false!
-    2. has_exact_time true bo'lsa:
-       - exact_time_display: "Bugun, 14:00" yoki "Ertaga, 11:30"
-       - target_iso: ISO 8601 formati
-       - suggested_reply: Suhbat vaqtini tasdiqlovchi xushmuomala qisqa xabar.
-    3. has_exact_time false bo'lsa:
-       - suggested_reply: HR ning savoliga aynan moslashtirilgan, Behruzbek nomidan professional javob matni.
+    1. Telethon orqali olingan oxirgi 15 ta xabarni (IN va OUT) kontekst sifatida o'qish.
+    2. Suhbat davomida HR rezyume/portfolio so'ramasa, HECH QACHON texnologiyalar ro'yxati (Python, Django...)
+       va GitHub havolasini qo'shmaslik! Har safar rezyume tayyorlamaslik!
+    3. HECH QACHON "Hozirda ishlayapman" deb yolg'on gapirmaslik! Agar "Ishlaysizmi?" yoki "O'qiysizmi?" deb so'ralsa:
+       "Yo'q, hozirda bo'shman va bor e'tiborimni ishga qaratib, to'liq stavkada ishlashga tayyorman" deb qisqa,
+       tabiiy va samimiy javob berish.
+    4. ANIQ UCHRASHUV SOATI: has_exact_time FAQAT aniq soat/daqiqa (masalan: 14:00, 15:30, soat 3 da) bo'lsagina true.
+       Umumiy savollarga has_exact_time: false.
     """
     now_tash = datetime.now(TASHKENT_TZ)
     now_str = now_tash.strftime("%d-%m-%Y %H:%M")
 
-    prompt = f"""
-    Sen Alfred — Behruzbek Bohodirovning shaxsiy professional IT-rekruteri va assistentisan.
-    Nomzod haqida: Behruzbek Bohodirov, Python Backend Developer (Python, Django, FastAPI, PostgreSQL, Docker, Redis, Celery, AI Agents).
-    GitHub: https://github.com/BEKUZ4A, Telegram: @BBCnew_2026.
+    formatted_history = "Avvalgi yozishmalar mavjud emas."
+    if chat_history:
+        h_lines = []
+        for m in chat_history[-15:]:
+            sender = m.get("sender", "HR" if not m.get("out") else "Behruzbek")
+            txt = m.get("text", "")
+            t_str = m.get("time_str", "")
+            h_lines.append(f"[{t_str}] {sender}: {txt}")
+        if h_lines:
+            formatted_history = "\n".join(h_lines)
 
-    Kuzatuvdagi HR (@{hr_username}{f' - {company}' if company else ''}) nomzodga Telegramda quyidagi xabarni yozdi:
-    "{message_text}"
+    prompt = f"""
+    Sen Alfred — Behruzbek Bohodirovning shaxsiy IT-assistentisan.
+    Nomzod haqida: Behruzbek Bohodirov (Python Backend Developer). Hozirda rasman hech qayerda ishlamaydi, bo'sh, yangi ishga to'liq stavkada kirishga tayyor.
 
     Hozirgi Toshkent vaqti (UTC+5): {now_str}
 
-    QAT'IY BAHOLASH VA TAHLIL QOIDALARI:
-    1. ANIQ UCHRASHUV SOATI BELGILANGANMI (has_exact_time):
+    Kuzatuvdagi HR (@{hr_username}{f' - {company}' if company else ''}) bilan Telegramdagi oxirgi yozishmalar tarixi:
+    ---
+    {formatted_history}
+    ---
+    HRning eng oxirgi xabari:
+    "{message_text}"
+
+    QAT'IY TAQIQLAR VA QOIDALAR (BUZILMASIN):
+    1. REZYUME VA GITHUB TIQISHTIRISHNI QAT'IYAN TAQIQLASH:
+       - Suhbat davomida agar HR to'g'ridan-to'g'ri rezyume, portfolio yoki GitHub so'ramasa, HECH QACHON javob ichiga texnologiyalar ro'yxatini (Python, Django, FastAPI...) va GitHub ssilkasini tiqishtirma! Har safar qaytadan rezyume tayyorlama!
+       - Oddiy insondek samimiy, xushmuomala, toza o'zbek tilida tabiiy so'zlashuv ohangida qisqa javob yoz.
+
+    2. YOLG'ON GAPIRISHNI QAT'IYAN TAQIQLASH ("Hozirda ishlayapman" DEB YOZMA!):
+       - HECH QACHON "Hozirda ishlayapman", "Kompaniyada faoliyat yuritmoqdaman" deb yolg'on gapirma!
+       - Agar HR "Ishlaysizmi?", "Ishliszmi siz?", "Bandmisiz?" yoki "O'qiysizmi?" deb so'rasa:
+         "Yo'q, hozirda bo'shman va bor e'tiborimni ishga qaratib, to'liq stavkada ishlashga tayyorman" deb qisqa, tabiiy va samimiy javob ber!
+
+    3. ANIQ UCHRASHUV SOATI BELGILANGANMI (has_exact_time):
        - "has_exact_time": true FAQAT VA FAQAT xabar ichida intervyu/suhbat uchun ANIQ SOAT yoki DAQIQA (masalan: "14:00", "soat 3 da", "15:30", "11:00 da", "ertaga soat 16:00 da") aytilgan bo'lsagina true bo'ladi!
-       - Agar HR shunchaki umumiy savol so'rayotgan bo'lsa (masalan: "Bugun vaqtingiz bormi?", "Bugun gaplashsak bo'ladimi?", "Tajribangiz qancha?", "Salom", "Qachon bo'shsiz?"):
-         -> "has_exact_time": false BO'LISHI SHART! Hech qachon umumiy savolga yoki vaqt so'rashga true dema!
-    2. Agar "has_exact_time": true bo'lsa:
-       - "exact_time_display": "Bugun, 14:00" yoki "Ertaga, 11:30" (aniq belgilangan soat). "Tez orada" yoki mavhum so'zlar yozish QAT'IYAN TAQIQLANADI!
-       - "target_iso": Uchrashuv vaqtining ISO formati (masalan: {now_tash.strftime('%Y-%m-%d')}T14:00:00+05:00).
-       - "suggested_reply": Suhbat vaqtini xushmuomalalik bilan tasdiqlovchi qisqa xabar.
-    3. Agar "has_exact_time": false bo'lsa:
-       - "exact_time_display": ""
-       - "target_iso": ""
-       - "suggested_reply": HR yozgan xabar yoki savolga aynan mos, Behruzbek nomidan juda samimiy va professional javob (masalan: "Bugun vaqtingiz bormi?" desa: "Assalomu alaykum! Ha, albatta, bugun bemalol gaplasha olamiz. Sizga qaysi soat qulay bo'ladi?", "Tajribangiz qancha?" desa tajriba haqida va GitHub havolasi bilan).
+       - Agar HR shunchaki umumiy savol so'rayotgan bo'lsa (masalan: "Ishliszmi siz?", "Bugun vaqtingiz bormi?", "Bugun gaplashsak bo'ladimi?", "Tajribangiz qancha?", "Salom", "Qachon bo'shsiz?"):
+         -> "has_exact_time": false BO'LISHI SHART! Hech qachon umumiy savolga "has_exact_time": true dema!
+
+    4. suggested_reply:
+       - HR yozgan oxirgi xabarga va suhbat tarixiga to'liq mos, 1-2 jumlali tabiiy va samimiy tayyor javob matni.
 
     JAVOBNI FAQAT QUYIDAGI JSON FORMATIDA QAYTAR (boshqa hech qanday so'zsiz):
     {{
       "has_exact_time": false,
       "exact_time_display": "",
       "target_iso": "",
-      "suggested_reply": "HR ga yuborish uchun tayyor javob matni"
+      "suggested_reply": "HR ga yuborish uchun tayyor qisqa tabiiy javob"
     }}
     """
     res = await call_gemini_api(prompt)
@@ -581,6 +604,104 @@ async def analyze_hr_message(message_text: str, hr_username: str, company: str =
         "exact_time_display": "",
         "target_iso": "",
         "suggested_reply": "Assalomu alaykum! Xabaringiz uchun katta rahmat. Taklifingiz bo'yicha batafsil suhbatlashishdan mamnun bo'laman."
+    }
+
+async def analyze_user_hr_dialogue(
+    chat_history: List[Dict[str, Any]], 
+    hr_username: str, 
+    company: str = ""
+) -> Dict[str, Any]:
+    """
+    Behruzbek va HR o'rtasidagi shaxsiy Telegram yozishmalarini tahlil qilish:
+    - Ikkala tomon o'rtasida suhbat/intervyu uchun aniq vaqt kelishildimi?
+    - Masalan, HR: '15:00 bo'ladimi?' va Behruzbek: 'Ha, bo'ladi' yoki Behruzbek: '16:00 da gaplashaylik' va HR: 'Xo'p'.
+    """
+    now_tash = datetime.now(TASHKENT_TZ)
+    now_str = now_tash.strftime("%d-%m-%Y %H:%M")
+
+    formatted_history = "Yozishmalar mavjud emas."
+    if chat_history:
+        h_lines = []
+        for m in chat_history[-15:]:
+            sender = m.get("sender", "HR" if not m.get("out") else "Behruzbek")
+            txt = m.get("text", "")
+            t_str = m.get("time_str", "")
+            h_lines.append(f"[{t_str}] {sender}: {txt}")
+        if h_lines:
+            formatted_history = "\n".join(h_lines)
+
+    prompt = f"""
+    Sen Alfred — Behruzbek Bohodirovning IT-assistentisan.
+    Quyida Behruzbek va HR (@{hr_username}{f' - {company}' if company else ''}) o'rtasidagi oxirgi 15 ta shaxsiy Telegram xabarlari keltirilgan:
+    ---
+    {formatted_history}
+    ---
+
+    Hozirgi Toshkent vaqti (UTC+5): {now_str}
+
+    VAZIFA:
+    Yozishmalar asosida ular o'rtasida intervyu / suhbat / qo'ng'iroq uchun ANIQ VAQT KELISHILGANMI-YO'QLIGINI aniqla.
+
+    QAT'IY QOIDALAR:
+    1. "has_agreed_time": true FAQAT agar ANIQ SOAT (masalan: 14:00, 15:30, soat 3 da, 11:00) bo'yicha ikkala tomon ham o'zaro kelishgan bo'lsa (biri taklif qilgan va ikkinchisi rozi bo'lgan)!
+    2. Agar hali bir tomon javob bermagan bo'lsa yoki shunchaki umumiy savol bo'lsa -> "has_agreed_time": false!
+    3. "exact_time_display": Aniq vaqt (masalan: "Bugun, 15:00" yoki "Ertaga, 11:30").
+    4. "target_iso": Kelishilgan vaqtning ISO 8601 formati ({now_tash.strftime('%Y-%m-%d')}T15:00:00+05:00).
+    5. "last_agreement": Vaqtga oid eng oxirgi kelishuv jumlalari (masalan: "HR: 15:00 bo'ladimi? | Behruzbek: Ha, bo'ladi").
+    6. "summary": Yozishmalar bo'yicha qisqa xulosa (1 jumla).
+
+    JAVOBNI FAQAT JSON FORMATIDA QAYTAR:
+    {{
+      "has_agreed_time": false,
+      "exact_time_display": "",
+      "target_iso": "",
+      "last_agreement": "",
+      "summary": ""
+    }}
+    """
+    res = await call_gemini_api(prompt)
+    if res:
+        try:
+            clean = res.replace("```json", "").replace("```", "").strip()
+            data = json.loads(clean)
+            if isinstance(data, dict):
+                has_agreed = bool(data.get("has_agreed_time"))
+                exact_disp = str(data.get("exact_time_display", "")).strip()
+                if "tez orada" in exact_disp.lower():
+                    has_agreed = False
+                    exact_disp = ""
+                return {
+                    "has_agreed_time": has_agreed,
+                    "exact_time_display": exact_disp,
+                    "target_iso": str(data.get("target_iso", "")).strip(),
+                    "last_agreement": str(data.get("last_agreement", "")).strip(),
+                    "summary": str(data.get("summary", "")).strip()
+                }
+        except Exception as e_json:
+            logger.debug(f"analyze_user_hr_dialogue JSON parse xatosi: {e_json}")
+
+    # Fallback regex
+    last_text = " ".join([m.get("text", "") for m in chat_history[-3:]]) if chat_history else ""
+    m_hm = re.search(r"\b([01]?\d|2[0-3])[:.]([0-5]\d)\b", last_text)
+    m_h = re.search(r"(?:soat\s*|в\s*)(\d{1,2})", last_text, re.IGNORECASE)
+    if m_hm or m_h:
+        hour = int(m_hm.group(1)) if m_hm else int(m_h.group(1))
+        minute = int(m_hm.group(2)) if m_hm else 0
+        exact_disp = f"Bugun, {hour:02d}:{minute:02d}"
+        return {
+            "has_agreed_time": True,
+            "exact_time_display": exact_disp,
+            "target_iso": f"{now_tash.strftime('%Y-%m-%d')}T{hour:02d}:{minute:02d}:00+05:00",
+            "last_agreement": last_text[:100],
+            "summary": f"Suhbat vaqti taxminan soat {hour:02d}:{minute:02d} ga kelishilgan."
+        }
+
+    return {
+        "has_agreed_time": False,
+        "exact_time_display": "",
+        "target_iso": "",
+        "last_agreement": chat_history[-1].get("text", "") if chat_history else "",
+        "summary": "Hali aniq suhbat vaqti kelishilmagan."
     }
 
 async def generate_hr_followup(hr_username: str, company: str = "") -> str:
