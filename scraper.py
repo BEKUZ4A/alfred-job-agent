@@ -100,12 +100,66 @@ def is_seller_advertisement(text: str) -> bool:
     ]
     return any(s in t for s in seller_indicators)
 
+def format_hh_salary(sal: Optional[dict]) -> str:
+    """HH.uz maosh ma'lumotlarini bo'shliqlar bilan chiroyli formatlash"""
+    if not sal or not isinstance(sal, dict):
+        return ""
+    s_from = sal.get("from")
+    s_to = sal.get("to")
+    curr = sal.get("currency", "UZS")
+    curr_map = {
+        "UZS": "so'm",
+        "USD": "$",
+        "EUR": "€",
+        "RUB": "rubl"
+    }
+    curr_str = curr_map.get(curr, curr or "so'm")
+    
+    try:
+        if s_from and s_to:
+            return f"{int(s_from):,d} – {int(s_to):,d} {curr_str}".replace(",", " ")
+        elif s_from:
+            return f"{int(s_from):,d} {curr_str} dan".replace(",", " ")
+        elif s_to:
+            return f"{int(s_to):,d} {curr_str} gacha".replace(",", " ")
+    except Exception:
+        pass
+    return ""
+
+def extract_hr_username(text: str) -> str:
+    """E'lon matnidan HR @username'ni ajratib olish"""
+    if not text:
+        return ""
+    matches = re.findall(r"@([a-zA-Z0-9_]{4,32})", text)
+    ignored = [
+        "joblinkuz", "rizqimuz", "ish_kerak_toshkent_bormi_ishlar", "jobforjunior", 
+        "freelance_uzb", "young_june", "young_intern", "ustozshogird", "it_jobs_uz", 
+        "bbcnew_2026", "hh_uz", "olx_uz", "admin", "channel", "bot", "python"
+    ]
+    for m in matches:
+        m_low = m.lower()
+        if m_low not in ignored and not m_low.endswith("bot"):
+            return m_low
+    return ""
+
 def is_potentially_relevant(text: str) -> bool:
     """
     Tezkor kalit so'zlar bo'yicha dastlabki filtr (Python, Backend, Bot, Sayt, AI).
+    Hard Pre-Filter: Senior, 5+ years, PHP, 1C, Java, C#, .NET, Flutter, iOS, Swift, marketing qat'iy rad etiladi.
     """
     t = text.lower()
-    
+
+    # HARD PRE-FILTER: Nomzod profiliga to'g'ri kelmaydigan yo'nalishlar va yuqori tajribalar
+    hard_reject_patterns = [
+        r"\bsenior\b", r"\blead\b", r"\b5\+\s*(?:yil|years|лет)\b", r"\b5\s*(?:yil|лет)\b",
+        r"\bphp\b", r"\b1c\b", r"\b1с\b", r"\bjava\b(?!script)",
+        r"\bc#\b", r"\b\.net\b", r"\bdotnet\b", r"\bflutter\b", r"\bios\b", r"\bswift\b",
+        r"\bmarketing\b", r"\bmarketolog\b", r"\bbuxgalter\b", r"\bsotuvchi\b", r"\bofitsiant\b", r"\bhaydovchi\b"
+    ]
+    for pat in hard_reject_patterns:
+        if re.search(pat, t, re.IGNORECASE):
+            return False
+
     python_keywords = [
         "python", "django", "fastapi", "flask", 
         "backend", "bekend", "py", "ai", "llm", 
@@ -125,18 +179,7 @@ def is_potentially_relevant(text: str) -> bool:
                 has_tech = True
         except Exception:
             pass
-    
-    is_entry_exempt = any(w in t for w in [
-        "junior", "intern", "staj", "amaliyot", "tajribasiz", 
-        "без опыта", "bez opita", "no experience"
-    ])
-    if "lead" in t and not is_entry_exempt:
-        return False
-    if "senior" in t and not is_entry_exempt:
-        return False
-    if "buxgalter" in t or "sotuvchi" in t or "ofitsiant" in t or "haydovchi" in t:
-        return False
-        
+            
     return has_tech
 
 def _fetch_hh_uz_sync() -> List[Dict]:
@@ -191,6 +234,8 @@ def _fetch_hh_uz_sync() -> List[Dict]:
                     snippet = item.get("snippet", {})
                     full_desc = f"{snippet.get('requirement', '')} {snippet.get('responsibility', '')}"
                     
+                salary_val = format_hh_salary(item.get("salary"))
+                hr_cand = extract_hr_username(full_desc)
                 vacancies.append({
                     "id": make_hash_id("hh_uz", v_id),
                     "title": title,
@@ -199,7 +244,9 @@ def _fetch_hh_uz_sync() -> List[Dict]:
                     "text": clean_text(f"{title} | {company} | {full_desc}")[:2500],
                     "source": "hh.uz",
                     "job_type": "vacancy",
-                    "posted_at": pub_at
+                    "posted_at": pub_at,
+                    "salary": salary_val,
+                    "hr_username": hr_cand
                 })
                 
             if vacancies:
@@ -389,6 +436,7 @@ async def scrape_telegram_channel(channel: str, today_only: bool = True) -> List
                 
                 vac_id = make_hash_id(clean_channel, post_url)
                 
+                hr_cand = extract_hr_username(raw_text)
                 vacancies.append({
                     "id": vac_id,
                     "title": title,
@@ -397,7 +445,8 @@ async def scrape_telegram_channel(channel: str, today_only: bool = True) -> List
                     "text": raw_text,
                     "source": f"@{clean_channel}",
                     "job_type": job_type,
-                    "posted_at": dt_str
+                    "posted_at": dt_str,
+                    "hr_username": hr_cand
                 })
     except Exception as e:
         logger.error(f"Telegram {clean_channel} kanalini o'qishda xatolik: {e}")

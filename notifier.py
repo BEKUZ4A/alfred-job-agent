@@ -413,6 +413,8 @@ async def notify_user_about_vacancies(matches: List[Dict[str, Any]]):
             text_message = format_vacancy_card(vac, rank=i)
             vac_id = str(vac["id"])
             vac_url = vac.get("url", "https://t.me")
+            hr_cand = vac.get("hr_username", "")
+            track_hr_btn_text = f"➕ @{hr_cand} ni kuzatuvga olish" if hr_cand else "➕ HR'ni kuzatuvga olish"
 
             # Inline tugmalar:
             # 1-qator: 📝 Matn + 📄 PDF Rezyume | 🎯 Suhbat savollari
@@ -426,7 +428,7 @@ async def notify_user_about_vacancies(matches: List[Dict[str, Any]]):
                     ],
                     [
                         {"text": "✅ Topshirdim", "callback_data": f"applied_{vac_id}"},
-                        {"text": "➕ HR'ni kuzatuvga olish", "callback_data": f"track_hr_{vac_id}"}
+                        {"text": track_hr_btn_text, "callback_data": f"track_hr_{vac_id}"}
                     ],
                     [
                         {"text": "🔗 E'lonni ochish", "url": vac_url}

@@ -1,3 +1,5 @@
+from gemini_agent import run_gemini_react_agent
+from backup_manager import hot_reload_all, schedule_db_backup, schedule_rules_backup
 import logging
 import asyncio
 import httpx
@@ -668,15 +670,15 @@ async def process_telegram_update(update: Dict[str, Any], trigger_scan_callback=
                 analysis = await analyze_hr_message(last_msg, username, company)
                 reply_to_send = analysis.get("suggested_reply", "Assalomu alaykum! Xabaringiz uchun rahmat. Suhbatlashishga tayyorman.")
 
-            sent = await send_message_as_user(username, reply_to_send)
+            sent = await send_message_as_user(username, reply_to_send, show_typing=True)
+            cb_msg_id = callback_query.get("message", {}).get("message_id")
+            if cb_msg_id:
+                await edit_telegram_reply_markup(cb_chat_id, cb_msg_id, {
+                    "inline_keyboard": [
+                        [{"text": "☑️ Bot orqali javob yuborildi", "callback_data": "noop_hr_sent"}]
+                    ]
+                })
             if sent:
-                cb_msg_id = cb_query.get("message", {}).get("message_id")
-                if cb_msg_id:
-                    await edit_telegram_reply_markup(cb_chat_id, cb_msg_id, {
-                        "inline_keyboard": [
-                            [{"text": "☑️ Javob HR'ga yuborildi", "callback_data": "noop_hr_sent"}]
-                        ]
-                    })
                 await send_telegram_message(
                     f"✅ <b>Javobingiz HR @{username} ga shaxsiy Telegramingizdan yuborildi!</b>\n\n"
                     f"<i>\"{reply_to_send}\"</i>",
@@ -687,6 +689,59 @@ async def process_telegram_update(update: Dict[str, Any], trigger_scan_callback=
                     f"❌ <b>HR @{username} ga xabar yuborishda xatolik yuz berdi.</b> Userbot holatini tekshiring.",
                     chat_id=cb_chat_id
                 )
+            return
+
+        # 6.1. ✍️ O'zim javob berdim (Lichkani jonli o'qish va vaqtni aniqlash)
+        if cb_data.startswith("manual_replied_"):
+            username = cb_data.replace("manual_replied_", "").strip().lstrip("@")
+            chat_history = await get_hr_chat_history(username, limit=10)
+            dialogue_text = " ".join([h.get("text", "") for h in chat_history]) if chat_history else ""
+            target_dt, time_str = parse_meeting_time(dialogue_text)
+
+            cb_msg_id = callback_query.get("message", {}).get("message_id")
+            if target_dt:
+                time_disp = target_dt.strftime("%H:%M")
+                update_hr_interview_time(username, target_dt.isoformat(), reminded_2min=False)
+                schedule_db_backup()
+                btn_text = f"☑️ O'zingiz javob berdingiz (Suhbat: {time_disp})"
+                if cb_msg_id:
+                    await edit_telegram_reply_markup(cb_chat_id, cb_msg_id, {
+                        "inline_keyboard": [
+                            [{"text": btn_text, "callback_data": "noop_hr_sent"}]
+                        ]
+                    })
+                await send_telegram_message(
+                    f"✅ <b>Siz HR (@{username}) bilan o'zingiz gaplashib, suhbatni soat {time_disp} ga kelishdingiz!</b>\n"
+                    f"🔔 2 daqiqa qolganda qo'ng'iroq va eslatma yuboraman.",
+                    chat_id=cb_chat_id
+                )
+            else:
+                if cb_msg_id:
+                    await edit_telegram_reply_markup(cb_chat_id, cb_msg_id, {
+                        "inline_keyboard": [
+                            [{"text": "☑️ O'zingiz javob berdingiz", "callback_data": "noop_hr_sent"}]
+                        ]
+                    })
+                await send_telegram_message(
+                    f"✅ <b>HR @{username} ga o'zingiz javob berganingiz belgilandi.</b>",
+                    chat_id=cb_chat_id
+                )
+            return
+
+        # 6.2. ✍️ O'zim yozdim (2 daqiqalik eslatma uchun)
+        if cb_data.startswith("manual_ready_"):
+            username = cb_data.replace("manual_ready_", "").strip().lstrip("@")
+            cb_msg_id = callback_query.get("message", {}).get("message_id")
+            if cb_msg_id:
+                await edit_telegram_reply_markup(cb_chat_id, cb_msg_id, {
+                    "inline_keyboard": [
+                        [{"text": "☑️ O'zingiz yozdingiz", "callback_data": "noop_hr_sent"}]
+                    ]
+                })
+            await send_telegram_message(
+                f"✅ <b>HR @{username} ga o'zingiz yozganingiz belgilandi. Suhbatda omad!</b>",
+                chat_id=cb_chat_id
+            )
             return
 
         # 7. ➕ HR'ni kuzatuvga olish (Vakansiya ostidagi tugma)
@@ -762,15 +817,15 @@ async def process_telegram_update(update: Dict[str, Any], trigger_scan_callback=
         if cb_data.startswith("send_ready_"):
             hr_username = cb_data.replace("send_ready_", "").strip().lstrip("@")
             ready_msg = "Assalomu alaykum! Men suhbatga tayyorman, aloqadaman."
-            sent = await send_message_as_user(hr_username, ready_msg)
+            sent = await send_message_as_user(hr_username, ready_msg, show_typing=True)
+            cb_msg_id = callback_query.get("message", {}).get("message_id")
+            if cb_msg_id:
+                await edit_telegram_reply_markup(cb_chat_id, cb_msg_id, {
+                    "inline_keyboard": [
+                        [{"text": "☑️ \"Tayyorman\" yuborildi", "callback_data": "noop_hr_sent"}]
+                    ]
+                })
             if sent:
-                cb_msg_id = cb_query.get("message", {}).get("message_id")
-                if cb_msg_id:
-                    await edit_telegram_reply_markup(cb_chat_id, cb_msg_id, {
-                        "inline_keyboard": [
-                            [{"text": "☑️ \"Tayyorman\" yuborildi", "callback_data": "noop_hr_sent"}]
-                        ]
-                    })
                 await send_telegram_message(
                     f"✅ <b>HR @{hr_username} ga \"Tayyorman\" deb xabar yuborildi!</b>\n\n"
                     f"<i>\"{ready_msg}\"</i>",
@@ -831,25 +886,36 @@ async def process_telegram_update(update: Dict[str, Any], trigger_scan_callback=
         await send_telegram_message(welcome_text, chat_id=chat_id)
         return
 
-    # 2. /call yoki /testcall buyrug'i (CallMeBot qo'ng'irog'ini test qilish)
-    if text in ["/call", "/testcall", "call", "Call"]:
+    # 2. /call yoki /test_call buyrug'i (2-akkaunt Caller Userbot orqali haqiqiy Telegram qo'ng'irog'i)
+    if text in ["/test_call", "/call", "/testcall", "call", "Call"]:
         await send_telegram_message(
-            "📞 <b>CallMeBot orqali qo'ng'iroq testi boshlandi...</b>\n"
-            "Serverga so'rov yuborilmoqda. Agar server band bo'lsa (FLOOD), 10 soniyadan so'ng 1 marta qayta uriniladi (retry).",
+            "📞 <b>2-Akkaunt (Caller Userbot) orqali Telegram audio qo'ng'iroq yuborilmoqda...</b>\n"
+            "Asosiy profilingizda 30 soniya davomida qo'ng'iroq (gudok) jiringlaydi.",
             chat_id=chat_id
         )
-        call_success = await make_call("Salom Behruz! Bu Alfred AI Agentidan test qo'ng'irog'i.", force=True)
+        from userbot import make_telegram_audio_call
+        call_success = await make_telegram_audio_call("Alfred AI test audio qo'ng'irog'i")
         if call_success:
             await send_telegram_message(
-                "✅ <b>Qo'ng'iroq muvaffaqiyatli amalga oshirildi!</b> Telegramingizga qo'ng'iroq borgan bo'lishi kerak.",
+                "✅ <b>Telegram audio qo'ng'iroq muvaffaqiyatli yuborildi!</b>",
                 chat_id=chat_id
             )
         else:
             await send_telegram_message(
-                "🚨 <b>DIQQAT: Yangi vakansiya topildi, lekin qo'ng'iroq liniyasi bandligi sababli xabar yuborildi!</b>\n\n"
-                "<i>(CallMeBot bepul serveri FLOOD xatosi berdi yoki liniya band. 10 soniya kutib qayta urinildi, ammo server javob bermadi)</i>",
+                "❌ <b>Qo'ng'iroq qilishda xatolik yuz berdi.</b>\n"
+                "CALLER_STRING_SESSION yoki Telegram Privacy sozlamalarini tekshiring.",
                 chat_id=chat_id
             )
+        return
+
+    # 2.1. /reload buyrug'i (Serverni o'chirmasdan 2 soniyada hot-reload)
+    if text in ["/reload", "reload", "Reload"]:
+        from backup_manager import hot_reload_all
+        res_info = await hot_reload_all()
+        await send_telegram_message(
+            f"✅ <b>Server o'chirilmasdan barcha qoidalar va mantiq 2 soniyada yangilandi! (Zero-Redeploy)</b>\n\n<i>{res_info}</i>",
+            chat_id=chat_id
+        )
         return
         
     # 3. /status buyrug'i (Oxirgi xatolik va AI holatini ko'rsatish)
@@ -1257,13 +1323,22 @@ async def process_telegram_update(update: Dict[str, Any], trigger_scan_callback=
         # Suhbat tarixi (oxirgi 10 ta xabar)
         history = chat_histories.setdefault(chat_id, [])
 
-        # Gemini javobini olish
-        ai_reply = await chat_with_alfred(
-            user_message=text,
-            vacancies_context=vacancies_context,
-            wants_voice=wants_voice,
-            history=history
-        )
+        # Universal ReAct Agent orqali javob va asboblarni ishga tushirish
+        try:
+            ai_reply = await run_gemini_react_agent(
+                user_message=text,
+                chat_id=chat_id,
+                history=history,
+                is_voice=is_voice_input
+            )
+        except Exception as e_react:
+            logger.warning(f"ReAct agent xatoligi, zaxira chat_with_alfred ga o'tiladi: {e_react}")
+            ai_reply = await chat_with_alfred(
+                user_message=text,
+                vacancies_context=vacancies_context,
+                wants_voice=wants_voice,
+                history=history
+            )
 
         # Tarixni yangilash
         history.append({"role": "user", "text": text})

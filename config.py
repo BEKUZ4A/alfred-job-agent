@@ -18,11 +18,15 @@ MAX_MATCHES_PER_SCAN = int(os.getenv("MAX_MATCHES_PER_SCAN", "10"))
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip().strip("'\"")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip().strip("'\"")
 
-# Telegram Userbot (Telethon) sozlamalari
+# Telegram Userbot (Telethon 1-akkaunt: HR kuzatuvi va asosiy profil)
 TELEGRAM_API_ID = int(os.getenv("TELEGRAM_API_ID", "0").strip().strip("'\"")) if os.getenv("TELEGRAM_API_ID") else None
 TELEGRAM_API_HASH = os.getenv("TELEGRAM_API_HASH", "").strip().strip("'\"")
 TELEGRAM_STRING_SESSION = os.getenv("TELEGRAM_STRING_SESSION", "").strip().strip("'\"")
 TELEGRAM_PHONE = os.getenv("TELEGRAM_PHONE", "").strip().strip("'\"")
+
+# Telegram Caller Userbot (Telethon 2-akkaunt: Audio qo'ng'iroq / Gudok beruvchi)
+CALLER_STRING_SESSION = os.getenv("CALLER_STRING_SESSION", "").strip().strip("'\"")
+CALLER_PHONE = os.getenv("CALLER_PHONE", "").strip().strip("'\"")
 
 # Ma'lumotlar bazasi (PostgreSQL / Neon.tech yoki SQLite)
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()

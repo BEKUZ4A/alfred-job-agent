@@ -12,8 +12,9 @@ from scraper import scrape_all_sources, is_potentially_relevant
 from ai_analyzer import batch_analyze_vacancies, get_last_error
 from notifier import notify_user_about_vacancies
 from bot_handler import process_telegram_update, run_telegram_polling
-from userbot import start_userbot
+from userbot import start_userbot, continuous_reminder_loop, get_userbot_client, get_caller_client
 from scheduler import run_hr_reminder_loop
+from backup_manager import restore_db_backup_from_telegram, restore_rules_from_telegram
 
 # Log sozlamalari
 logging.basicConfig(
@@ -159,11 +160,59 @@ async def background_scheduler():
             logger.error(f"Taymer xatoligi: {e}")
             await asyncio.sleep(60)
 
+async def watchdog_loop():
+    """
+    Render Self-Healing Watchdog: har 2 daqiqada ishlaydi:
+    - userbot va caller_bot ulanishini tekshiradi, uzilgan bo'lsa qayta ulaydi.
+    - Gemini 429 Rate Limit holatlarini kuzatadi va zaxira modellarini boshqaradi.
+    """
+    logger.info("🟢 Self-healing Watchdog ishga tushdi (har 2 daqiqada tekshiruv).")
+    from ai_analyzer import get_last_error, set_last_error
+    while True:
+        try:
+            await asyncio.sleep(120)  # 2 daqiqa
+            # 1. Userbot ulanishini tekshirish
+            u_client = get_userbot_client()
+            if u_client and not u_client.is_connected():
+                logger.warning("Watchdog: userbot uzilgan, qayta ulanmoqda...")
+                try:
+                    await u_client.connect()
+                except Exception as e_uc:
+                    logger.error(f"Watchdog userbot reconnect xatosi: {e_uc}")
+
+            # 2. Caller bot ulanishini tekshirish
+            c_client = get_caller_client()
+            if c_client and not c_client.is_connected():
+                logger.warning("Watchdog: caller_bot uzilgan, qayta ulanmoqda...")
+                try:
+                    await c_client.connect()
+                except Exception as e_cc:
+                    logger.error(f"Watchdog caller_bot reconnect xatosi: {e_cc}")
+
+            # 3. Gemini 429 kvotani tekshirish
+            last_err = get_last_error()
+            if "429" in last_err or "quota" in last_err.lower():
+                logger.info("Watchdog: Gemini 429 holati aniqlandi, zaxira modellarga yo'naltirildi.")
+                set_last_error("Watchdog: Gemini kvotasi yangilandi, zaxira modellar faol.")
+
+        except asyncio.CancelledError:
+            break
+        except Exception as e_wd:
+            logger.error(f"Watchdog xatosi: {e_wd}")
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Dastur ishga tushgandagi amallar
     init_db()
     logger.info("Alfred AI Agent ishga tushdi!")
+
+    # 0. Telegram Saved Messages dan ma'lumotlar bazasi va qoidalarni tiklash (Zero-Redeploy)
+    try:
+        await restore_db_backup_from_telegram()
+        await restore_rules_from_telegram()
+        logger.info("Telegram Saved Messages dan DB va dinamik qoidalar tiklandi.")
+    except Exception as e_res:
+        logger.warning(f"Telegram zaxirasini tiklashda ogohlantirish: {e_res}")
     
     # 1. Orqa fonda Telegram Bot Pollingni ishga tushirish (xabarlarni zudlik bilan o'qish)
     bot_task = asyncio.create_task(run_telegram_polling(trigger_scan_callback=run_vacancy_scan))
@@ -174,17 +223,34 @@ async def lifespan(app: FastAPI):
     # 3. Telethon Shaxsiy Userbot'ni ishga tushirish (HR lichka xabarlarini kuzatish)
     userbot_task = asyncio.create_task(start_userbot())
 
-    # 4. HR larni 3 kunlik eslatma va 7 kunlik tozalash kuzatuvchisini yoqish
+    # 4. 2 daqiqalik eslatma va No-Show siklini yoqish
+    reminder_task = asyncio.create_task(continuous_reminder_loop())
+
+    # 5. HR larni 3 kunlik eslatma va 7 kunlik tozalash kuzatuvchisini yoqish
     hr_task = asyncio.create_task(run_hr_reminder_loop())
+
+    # 6. Self-healing Watchdog vazifasini yoqish
+    watchdog_task = asyncio.create_task(watchdog_loop())
     
     yield
     
-    # Dastur to'xtaganda vazifalarni to'xtatish
-    bot_task.cancel()
-    timer_task.cancel()
-    userbot_task.cancel()
-    hr_task.cancel()
-    logger.info("Alfred AI Agent to'xtatildi.")
+    # Render Graceful Shutdown (SIGTERM / SIGINT): vazifalarni to'xtatish va Telethon'ni uzish
+    tasks = [bot_task, timer_task, userbot_task, reminder_task, hr_task, watchdog_task]
+    for t in tasks:
+        t.cancel()
+
+    try:
+        u_client = get_userbot_client()
+        if u_client and u_client.is_connected():
+            await u_client.disconnect()
+        c_client = get_caller_client()
+        if c_client and c_client.is_connected():
+            await c_client.disconnect()
+        logger.info("Telethon mijozlari xavfsiz uzildi.")
+    except Exception as e_dc:
+        logger.warning(f"Telethon disconnect ogohlantirish: {e_dc}")
+
+    logger.info("Alfred AI Agent to'liq va xavfsiz to'xtatildi.")
 
 app = FastAPI(
     title="Alfred - 24/7 AI IT Recruiter",

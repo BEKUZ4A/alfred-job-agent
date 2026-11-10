@@ -207,9 +207,9 @@ def generate_pdf_resume(tailored_summary: str = "", target_job_title: str = "", 
     projects = [
         (
             "Risk Radar — AI Biznes-analitika va Xavf tahlili platformasi",
-            "Texnologiyalar: Django REST Framework, PostgreSQL, Docker, Celery, Redis, AWS",
-            "Kompaniya moliyaviy va operatsion ko'rsatkichlarini chuqur tahlil qiluvchi, sun'iy intellekt yordamida "
-            "risk omillarini oldindan bashorat qiluvchi avtomatlashtirilgan backend arxitekturasi."
+            "Texnologiyalar: Django REST Framework, PostgreSQL, Docker, Celery, Redis, AWS EC2 Deploy",
+            "Kompaniya moliyaviy va operatsion ko'rsatkichlarini chuqur tahlil qiluvchi, AWS EC2 bulutida deploy qilingan "
+            "va sun'iy intellekt yordamida risk omillarini oldindan bashorat qiluvchi avtomatlashtirilgan backend arxitekturasi."
         ),
         (
             "Uzum AI Shop — Intellektual Elektron Savdo Yordamchisi",
@@ -244,8 +244,8 @@ def generate_pdf_resume(tailored_summary: str = "", target_job_title: str = "", 
     # 5. SERTIFIKATLAR VA YUTUQLAR
     story.append(Paragraph("SERTIFIKATLAR VA YUTUQLAR", section_heading))
     achievements = [
-        "• <b>Codify Tech Backend Development Certificate</b> — Backend dasturlash bo'yicha professional sertifikat (Sertifikat ID: <code>CID-2026-000026</code>)",
-        "• <b>Turon University AI Engineering Hackathon</b> — 2-bosqich finalchisi (AI Agentlar va LLM avtomatlashtirish yo'nalishi)",
+        "• <b>Pro Programming Backend Certificate</b> — Backend dasturlash bo'yicha professional sertifikat (Sertifikat ID: <code>CID-2026-000026</code>, Tekshirish: certid.uz)",
+        "• <b>Turon University AI Engineering Hackathon</b> — Finalchi (AI Agentlar va LLM avtomatlashtirish yo'nalishi)",
         "• <b>Tillar:</b> O'zbek tili (Ona tili), Rus tili (Texnik/Muloqot), Ingliz tili (Texnik hujjatlar va dasturlash darajasi)"
     ]
     for ach in achievements:

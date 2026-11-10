@@ -179,11 +179,13 @@ def init_db():
 
         for col, col_type in [
             ("last_seen_msg_id", "INTEGER DEFAULT 0"),
-            ("pending_reply", "TEXT DEFAULT ''")
+            ("pending_reply", "TEXT DEFAULT ''"),
+            ("interview_time", "TEXT DEFAULT ''"),
+            ("reminded_2min", "INTEGER DEFAULT 0")
         ]:
             try:
                 cursor.execute(f"ALTER TABLE tracked_hrs ADD COLUMN {col} {col_type}")
-            except sqlite3.OperationalError:
+            except Exception:
                 pass
 
         for col, col_type in [
@@ -511,3 +513,108 @@ try:
         add_managed_keyword(_k)
 except Exception:
     pass
+
+
+def update_hr_interview_time(username: str, interview_iso: str, reminded_2min: bool = False):
+    """HR bilan kelishilgan suhbat vaqtini bazada saqlash"""
+    username = username.strip().lstrip("@").lower()
+    execute_query(
+        "UPDATE tracked_hrs SET interview_time = ?, reminded_2min = ?, last_updated = CURRENT_TIMESTAMP WHERE LOWER(username) = ?",
+        (interview_iso, 1 if reminded_2min else 0, username),
+        commit=True
+    )
+
+def update_hr_reminded(username: str, reminded_2min: bool = True):
+    """2 daqiqalik eslatma berilganligini belgilash"""
+    username = username.strip().lstrip("@").lower()
+    execute_query(
+        "UPDATE tracked_hrs SET reminded_2min = ?, last_updated = CURRENT_TIMESTAMP WHERE LOWER(username) = ?",
+        (1 if reminded_2min else 0, username),
+        commit=True
+    )
+
+def get_backup_data() -> Dict[str, Any]:
+    """#ALFRED_DB_BACKUP uchun to'liq ma'lumotlar tuzilmasini yig'ish"""
+    hrs = get_all_tracked_hrs()
+    tracked_hrs_dict = {}
+    for h in hrs:
+        u = h.get("username", "").strip().lstrip("@").lower()
+        if u:
+            tracked_hrs_dict[u] = {
+                "company": h.get("company", ""),
+                "last_seen_msg_id": h.get("last_seen_msg_id") or 0,
+                "interview_time": h.get("interview_time") or "",
+                "reminded_2min": bool(h.get("reminded_2min")),
+                "status": h.get("status") or "waiting"
+            }
+    # Seen job hashes
+    rows = execute_query("SELECT content_hash FROM seen_vacancies WHERE content_hash != '' ORDER BY created_at DESC LIMIT 500", fetch_all=True) or []
+    seen_hashes = list({r["content_hash"] for r in rows if r.get("content_hash")})
+    # Applied jobs
+    applied_rows = execute_query("SELECT vacancy_id, title, company, url, content_hash FROM applied_jobs ORDER BY applied_at DESC LIMIT 100", fetch_all=True) or []
+    
+    from datetime import datetime
+    from config import TASHKENT_TZ
+    return {
+        "tracked_hrs": tracked_hrs_dict,
+        "seen_job_hashes": seen_hashes,
+        "applied_jobs": applied_rows,
+        "updated_at": datetime.now(TASHKENT_TZ).isoformat()
+    }
+
+def restore_from_backup_data(data: Dict[str, Any]) -> bool:
+    """Telegram #ALFRED_DB_BACKUP dan olingan JSON ni SQLite bazaga 100% tiklash"""
+    if not isinstance(data, dict):
+        return False
+    try:
+        # 1. Restore tracked HRs
+        tracked_hrs = data.get("tracked_hrs", {})
+        for u, info in tracked_hrs.items():
+            u_clean = u.strip().lstrip("@").lower()
+            existing = get_tracked_hr(u_clean)
+            company = info.get("company", "")
+            last_seen_id = info.get("last_seen_msg_id", 0)
+            interview_time = info.get("interview_time", "")
+            reminded = 1 if info.get("reminded_2min") else 0
+            status = info.get("status", "waiting")
+            if not existing:
+                execute_query(
+                    "INSERT INTO tracked_hrs (username, company, last_seen_msg_id, interview_time, reminded_2min, status) VALUES (?, ?, ?, ?, ?, ?)",
+                    (u_clean, company, last_seen_id, interview_time, reminded, status),
+                    commit=True
+                )
+            else:
+                execute_query(
+                    "UPDATE tracked_hrs SET company = ?, last_seen_msg_id = MAX(last_seen_msg_id, ?), interview_time = ?, reminded_2min = ?, status = ? WHERE LOWER(username) = ?",
+                    (company or existing.get("company", ""), last_seen_id, interview_time or existing.get("interview_time", ""), reminded, status or existing.get("status", "waiting"), u_clean),
+                    commit=True
+                )
+
+        # 2. Restore seen hashes
+        hashes = data.get("seen_job_hashes", [])
+        for h in hashes:
+            if h:
+                exist = execute_query("SELECT id FROM seen_vacancies WHERE content_hash = ?", (h,), fetch_one=True)
+                if not exist:
+                    fake_id = f"backup_{h[:16]}"
+                    execute_query(
+                        "INSERT OR IGNORE INTO seen_vacancies (id, title, company, url, source, match_score, ai_summary, content_hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                        (fake_id, "Restored Job", "Company", "#", "backup", 70, "Restored from backup", h),
+                        commit=True
+                    )
+
+        # 3. Restore applied jobs
+        applied_list = data.get("applied_jobs", [])
+        for item in applied_list:
+            v_id = item.get("vacancy_id") or ""
+            title = item.get("title") or ""
+            comp = item.get("company") or ""
+            url = item.get("url") or ""
+            c_hash = item.get("content_hash") or ""
+            if v_id:
+                mark_job_applied(v_id, title, comp, url, content_hash=c_hash)
+        return True
+    except Exception as e:
+        import logging
+        logging.getLogger("Alfred.Database").error(f"restore_from_backup_data xatosi: {e}")
+        return False
