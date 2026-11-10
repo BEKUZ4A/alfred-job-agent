@@ -9,7 +9,6 @@ from typing import Dict, Any, List, Optional
 from config import (
     TELEGRAM_BOT_TOKEN,
     TELEGRAM_CHAT_ID,
-    CALLMEBOT_USERNAME,
     TASHKENT_TZ,
     CALL_START_HOUR,
     CALL_END_HOUR,
@@ -49,64 +48,15 @@ def format_posted_at(posted_at: str) -> str:
         return posted_at if posted_at else "🕒 Bugun"
 
 async def make_call(text: str = "Sizga mos yangi vakansiya chiqdi", force: bool = False) -> bool:
-    """
-    CallMeBot API orqali Telegramdan qo'ng'iroq qilish.
-    Agar CallMeBot FLOOD yoki xato qaytarsa, 10 soniya kutib 1 marta qayta urinadi.
-    """
+    """2-chi akkaunt (caller_bot) orqali haqiqiy Telegram audio qo'ng'iroq qilish"""
     if not force and not is_call_allowed_now():
         logger.info("Qo'ng'iroq vaqti emas (8:00 dan 20:00 gacha ruxsat etilgan), qo'ng'iroq bekor qilindi.")
         return False
-
-    if not CALLMEBOT_USERNAME:
-        logger.info("CallMeBot username kiritilmagan, qo'ng'iroq o'tkazib yuborildi.")
-        return False
-        
-    username = CALLMEBOT_USERNAME.strip()
-    if not username.startswith("@"):
-        username = f"@{username}"
-        
-    encoded_text = urllib.parse.quote(text)
-    url = f"http://api.callmebot.com/start.php?user={username}&text={encoded_text}&lang=ru-RU-Standard-B"
-    
-    async def _execute_request() -> tuple[bool, str]:
-        try:
-            async with httpx.AsyncClient(timeout=15) as client:
-                resp = await client.get(url)
-                body = resp.text.strip()
-                lower_body = body.lower()
-
-                if resp.status_code != 200:
-                    return False, f"HTTP {resp.status_code}: {body[:150]}"
-
-                if "flood" in lower_body or "too many users" in lower_body:
-                    return False, f"FLOOD xatosi ({body[:150]})"
-
-                if "error" in lower_body:
-                    return False, f"Server xatosi ({body[:150]})"
-
-                return True, body[:150]
-        except Exception as e:
-            return False, f"Tarmoq/ulanish xatosi: {e}"
-
     try:
-        logger.info(f"📞 CallMeBot orqali qo'ng'iroq qilinmoqda ({username})...")
-        success, msg = await _execute_request()
-        if success:
-            logger.info(f"✅ CallMeBot qo'ng'irog'i muvaffaqiyatli amalga oshirildi: {msg}")
-            return True
-
-        logger.warning(f"⚠️ 1-urinish o'tmadi: {msg}. 10 soniya kutib qayta urinamiz...")
-        await asyncio.sleep(10)
-
-        success2, msg2 = await _execute_request()
-        if success2:
-            logger.info(f"✅ 2-urinishda CallMeBot qo'ng'irog'i muvaffaqiyatli o'tdi: {msg2}")
-            return True
-        else:
-            logger.error(f"❌ 2-urinishda ham qo'ng'iroq o'tmadi: {msg2}")
-            return False
+        from userbot import make_telegram_call
+        return await make_telegram_call(text)
     except Exception as e:
-        logger.error(f"make_call da kutilmagan xatolik: {e}")
+        logger.error(f"Telegram audio qo'ng'iroq xatosi: {e}")
         return False
 
 def markdown_to_telegram_html(text: str) -> str:

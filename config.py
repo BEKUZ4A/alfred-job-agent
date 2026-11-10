@@ -25,8 +25,11 @@ TELEGRAM_STRING_SESSION = os.getenv("TELEGRAM_STRING_SESSION", "").strip().strip
 TELEGRAM_PHONE = os.getenv("TELEGRAM_PHONE", "").strip().strip("'\"")
 
 # Telegram Caller Userbot (Telethon 2-akkaunt: Audio qo'ng'iroq / Gudok beruvchi)
-CALLER_STRING_SESSION = os.getenv("CALLER_STRING_SESSION", "1ApWapzMBuxQkD8duazRqHaglmuNTOOhhBpXfUat8haM6ryl_w5eo1C8twjxr0PCqtJ3mOIw-JSycj0yeCVilGtgTSoYKUKxTxgwGmxoOulNqOlm4lR2RqWJYr2M9NcQEFJqwJ3PH5Ue4z_T60h65tQqzgkCPblXDew7C2ZbFr2istHHkwg87XuFQ_0nEkEkXkQeCxDYnyRWCoUbG6ciYCh7H6YtwYbJJnW65cn7nTgpFxmuKZN1ubNNSViKCR_2XCkGjr7dwKnkbPEMLERexT6quypfDl7WBVrHq6PdSLvYKKEkVppZcKXo3LC9dbWuLOmSmnMWMqqi7opnhJUDFnBU-04jj7uY=").strip().strip("'\"")
-CALLER_PHONE = os.getenv("CALLER_PHONE", "+998930037685").strip().strip("'\"")
+DEFAULT_CALLER_SESSION = "1ApWapzMBuxQkD8duazRqHaglmuNTOOhhBpXfUat8haM6ryl_w5eo1C8twjxr0PCqtJ3mOIw-JSycj0yeCVilGtgTSoYKUKxTxgwGmxoOulNqOlm4lR2RqWJYr2M9NcQEFJqwJ3PH5Ue4z_T60h65tQqzgkCPblXDew7C2ZbFr2istHHkwg87XuFQ_0nEkEkXkQeCxDYnyRWCoUbG6ciYCh7H6YtwYbJJnW65cn7nTgpFxmuKZN1ubNNSViKCR_2XCkGjr7dwKnkbPEMLERexT6quypfDl7WBVrHq6PdSLvYKKEkVppZcKXo3LC9dbWuLOmSmnMWMqqi7opnhJUDFnBU-04jj7uY="
+DEFAULT_CALLER_PHONE = "+998930037685"
+
+CALLER_STRING_SESSION = (os.getenv("CALLER_STRING_SESSION") or "").strip().strip("'\"") or DEFAULT_CALLER_SESSION
+CALLER_PHONE = (os.getenv("CALLER_PHONE") or "").strip().strip("'\"") or DEFAULT_CALLER_PHONE.strip("'\"")
 
 # Ma'lumotlar bazasi (PostgreSQL / Neon.tech yoki SQLite)
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
@@ -38,8 +41,6 @@ GOOGLE_CALENDAR_ID = os.getenv("GOOGLE_CALENDAR_ID", "primary").strip()
 # Google Gemini API kaliti
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 
-# CallMeBot qo'ng'iroq sozlamasi (masalan: @username)
-CALLMEBOT_USERNAME = os.getenv("CALLMEBOT_USERNAME", "").strip()
 
 # Minimal moslik bali (0-100 oralig'ida)
 MIN_MATCH_SCORE = int(os.getenv("MIN_MATCH_SCORE", "65"))

@@ -22,7 +22,6 @@ from config import (
     CALLER_PHONE,
     TELEGRAM_BOT_TOKEN,
     TELEGRAM_CHAT_ID,
-    CALLMEBOT_USERNAME,
     TASHKENT_TZ
 )
 from database import (
@@ -108,81 +107,102 @@ def format_message_time(msg_date) -> str:
 
 # ----------------- TELEGRAM AUDIO QO'NG'IROQ VA DRAFT -----------------
 
-async def make_telegram_call(reason_text: str = "") -> bool:
+async def make_telegram_call_detailed(reason_text: str = "") -> tuple[bool, str]:
     """
     2-chi Telegram akkauntdan (caller_bot) asosiy profilga haqiqiy Telegram audio qo'ng'iroq qilish.
-    - functions.messages.GetDhConfigRequest orqali g_a_hash generatsiya qiladi.
+    - functions.messages.GetDhConfigRequest orqali to'g'ri g_a_hash generatsiya qiladi.
     - PhoneCallProtocol(min_layer=65, max_layer=92, udp_p2p=True, udp_reflector=True, library_versions=['2.4.4'])
-    - 35 soniya davomida to'xtovsiz jiringlab turadi.
+    - Telefoningizda 35 soniya to'xtovsiz jiringlaydi.
     - Bir vaqtning o'zida botdan ElevenLabs ovozida reason_text ni ovozli xabar qilib yuboradi.
+    - Qaytaradi: (success: bool, info: str - caller_tag yoki aniq Exception xatosi)
     """
     c_caller = get_caller_client()
     c_user = get_userbot_client()
 
-    call_success = False
-    if c_caller and c_caller.is_connected() and await c_caller.is_user_authorized():
-        try:
-            me_primary = await c_user.get_me() if (c_user and c_user.is_connected()) else None
-            target_user = (me_primary.username or me_primary.id) if me_primary else TELEGRAM_CHAT_ID
+    if not c_caller:
+        return False, "2-chi akkaunt (caller_bot) sozlanmagan (CALLER_STRING_SESSION bo'sh)."
 
+    if not c_caller.is_connected():
+        try:
+            await c_caller.connect()
+        except Exception as e_con:
+            return False, f"2-chi akkauntga ulanish xatosi: {e_con}"
+
+    if not await c_caller.is_user_authorized():
+        return False, "2-chi akkaunt sessiyasi avtorizatsiyadan o'tmagan."
+
+    try:
+        me_caller = await c_caller.get_me()
+        caller_tag = f"@{me_caller.username}" if getattr(me_caller, "username", None) else f"ID: {me_caller.id}"
+
+        me_primary = await c_user.get_me() if (c_user and c_user.is_connected()) else None
+        target_user = (me_primary.username or me_primary.id) if me_primary else TELEGRAM_CHAT_ID
+
+        # DH Config va Hash generatsiyasi
+        try:
+            await c_caller(functions.messages.GetDhConfigRequest(version=0, random_length=256))
+        except Exception:
+            pass
+        g_a = os.urandom(256)
+        g_a_hash = hashlib.sha256(g_a).digest()
+
+        ent = await c_caller.get_input_entity(target_user)
+        protocol = PhoneCallProtocol(
+            min_layer=65, 
+            max_layer=92, 
+            udp_p2p=True, 
+            udp_reflector=True,
+            library_versions=['2.4.4']
+        )
+        rand_id = random.randint(1, 2**30)
+
+        call_req = await c_caller(RequestCallRequest(
+            user_id=ent,
+            random_id=rand_id,
+            g_a_hash=g_a_hash,
+            protocol=protocol
+        ))
+        logger.info(f"📞 2-akkauntdan ({caller_tag}) haqiqiy Telegram Audio qo'ng'irog'i yo'llandi (35s ring)!")
+
+        # 35 soniya to'xtovsiz jiringlatib, so'ng discard qilish
+        async def _auto_discard():
+            await asyncio.sleep(35)
             try:
-                dh_config = await c_caller(functions.messages.GetDhConfigRequest(version=0, random_length=256))
+                p_call = getattr(call_req, "phone_call", None)
+                if p_call:
+                    from telethon.tl.types import InputPhoneCall
+                    await c_caller(DiscardCallRequest(
+                        peer=InputPhoneCall(id=p_call.id, access_hash=p_call.access_hash),
+                        duration=35,
+                        reason=PhoneCallDiscardReasonBusy(),
+                        connection_id=0
+                    ))
             except Exception:
                 pass
-            g_a = os.urandom(256)
-            g_a_hash = hashlib.sha256(g_a).digest()
+        asyncio.create_task(_auto_discard())
 
-            ent = await c_caller.get_input_entity(target_user)
-            protocol = PhoneCallProtocol(
-                min_layer=65, 
-                max_layer=92, 
-                udp_p2p=True, 
-                udp_reflector=True,
-                library_versions=['2.4.4']
-            )
-            rand_id = random.randint(1, 2**30)
+        # Bir vaqtning o'zida botdan ElevenLabs ovozida reason_text ni jo'natish
+        if reason_text:
+            try:
+                from voice import generate_voice_message
+                from notifier import send_telegram_voice
+                v_file = await generate_voice_message(reason_text, prepare_script=False)
+                if v_file:
+                    await send_telegram_voice(v_file, caption=f"🎙 <b>{reason_text}</b>")
+            except Exception as e_v:
+                logger.warning(f"Ovozli eslatma xatosi: {e_v}")
 
-            call_req = await c_caller(RequestCallRequest(
-                user_id=ent,
-                random_id=rand_id,
-                g_a_hash=g_a_hash,
-                protocol=protocol
-            ))
-            logger.info("📞 2-akkauntdan asosiy profilingizga haqiqiy Telegram Audio qo'ng'irog'i yo'llandi (35s)!")
-            call_success = True
+        return True, caller_tag
 
-            async def _auto_discard():
-                await asyncio.sleep(35)
-                try:
-                    p_call = getattr(call_req, "phone_call", None)
-                    if p_call:
-                        from telethon.tl.types import InputPhoneCall
-                        await c_caller(DiscardCallRequest(
-                            peer=InputPhoneCall(id=p_call.id, access_hash=p_call.access_hash),
-                            duration=35,
-                            reason=PhoneCallDiscardReasonBusy(),
-                            connection_id=0
-                        ))
-                except Exception:
-                    pass
-            asyncio.create_task(_auto_discard())
-        except Exception as e_call:
-            logger.warning(f"2-akkauntdan qo'ng'iroq qilishda ogohlantirish: {e_call}")
+    except Exception as e_call:
+        logger.error(f"2-akkauntdan qo'ng'iroq qilishda Telethon xatoligi: {e_call}")
+        return False, f"Telethon xatosi: {e_call}"
 
-    # Bir vaqtning o'zida botdan ElevenLabs ovozida reason_text ni ovozli xabar qilib yuborish
-    if reason_text:
-        try:
-            from voice import generate_voice_message
-            from notifier import send_telegram_voice
-            v_file = await generate_voice_message(reason_text, prepare_script=False)
-            if v_file:
-                await send_telegram_voice(v_file, caption=f"🎙 <b>{reason_text}</b>")
-        except Exception as e_v:
-            logger.warning(f"Qo'ng'iroq bilan birga ovozli xabar yuborishda ogohlantirish: {e_v}")
+async def make_telegram_call(reason_text: str = "") -> bool:
+    """Mavjud chaqiruvlar uchun boolean qaytaruvchi wrapper"""
+    success, _ = await make_telegram_call_detailed(reason_text)
+    return success
 
-    return call_success
-
-# Orqaga moslik uchun alias
 make_telegram_audio_call = make_telegram_call
 
 async def save_hr_draft_message(hr_username: str, draft_text: str) -> bool:

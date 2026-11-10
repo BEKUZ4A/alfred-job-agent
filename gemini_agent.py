@@ -569,11 +569,15 @@ async def run_gemini_react_agent(
                 f"📞 Sizga soat <b>{time_disp}</b> da 2-akkaunt orqali Telegramdan qo'ng'iroq qilaman."
             )
         else:
-            await make_telegram_call("Behruzbek, so'rovingiz bo'yicha qo'ng'iroq qilyapman!")
-            return (
-                "📞 <b>Hoziroq 2-akkauntdan (Caller Userbot) Telegram audio qo'ng'iroq yuborildi!</b>\n"
-                "Asosiy profilingizda 35 soniya davomida qo'ng'iroq (gudok) jiringlaydi."
-            )
+            from userbot import make_telegram_call_detailed
+            call_ok, c_info = await make_telegram_call_detailed("Behruzbek, so'rovingiz bo'yicha qo'ng'iroq qilyapman!")
+            if call_ok:
+                return (
+                    f"📲 <b>2-chi akkauntdan ({c_info}) sizning Telegramingizga audio qo'ng'iroq yuborildi!</b>\n"
+                    "Qo'ng'iroq 35 soniya davomida jiringlab turadi."
+                )
+            else:
+                return f"❌ <b>Qo'ng'iroq qilishda xatolik yuz berdi:</b>\n<code>{c_info}</code>"
 
     # b) "bu HR yozmadi" yoki No-Show holati
     if "bu hr yozmadi" in lower_msg or "yozmadi" in lower_msg or "javob bermadi" in lower_msg:

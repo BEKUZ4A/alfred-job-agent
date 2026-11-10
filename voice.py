@@ -193,7 +193,7 @@ async def generate_elevenlabs_tts(clean_text: str, voice_id: Optional[str] = Non
             except Exception as e_voice:
                 err_str = str(e_voice)
                 # Agar kutubxona ovozi bo'yicha cheklov bo'lsa (masalan 402 paid_plan_required)
-                if "paid_plan_required" in err_str or "library voices" in err_str or "402" in err_str:
+                if "paid_plan_required" in err_str or "library voices" in err_str or "402" in err_str or "free_users_not_allowed" in err_str or "creator tier" in err_str:
                     logger.warning(
                         f"ElevenLabs ovoz ID ({voice_id}) pullik obuna talab qildi. "
                         f"Standart premade ovoz bilan urinilmoqda..."

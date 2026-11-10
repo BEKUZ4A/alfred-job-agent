@@ -415,7 +415,7 @@ async def handle_user_hr_discussion(message: Dict[str, Any], chat_id: str) -> bo
     ignored_usernames = {
         "joblinkuz", "rizqimuz", "ish_kerak_toshkent_bormi_ishlar", "jobforjunior", 
         "freelance_uzb", "young_june", "young_intern", "ustozshogird", "it_jobs_uz", 
-        "bbcnew_2026", "callmebot"
+        "bbcnew_2026", 
     }
 
     target_hr = None
@@ -900,7 +900,7 @@ async def process_telegram_update(update: Dict[str, Any], trigger_scan_callback=
     is_call_req = (text in ["/test_call", "/call", "/testcall", "call", "Call"]) or any(ct in lower_t for ct in call_triggers)
 
     if is_call_req:
-        from userbot import parse_custom_call_time, make_telegram_call
+        from userbot import parse_custom_call_time, make_telegram_call_detailed
         from database import add_custom_call_timer
         from backup_manager import schedule_db_backup
 
@@ -911,22 +911,24 @@ async def process_telegram_update(update: Dict[str, Any], trigger_scan_callback=
             schedule_db_backup()
             await send_telegram_message(
                 f"⏰ <b>Qo'ng'iroq taymeri o'rnatildi!</b>\n\n"
-                f"📞 Sizga soat <b>{time_disp}</b> da 2-akkaunt orqali Telegramdan qo'ng'iroq qilaman.",
+                f"📞 Sizga soat <b>{time_disp}</b> da 2-chi akkaunt orqali Telegramdan qo'ng'iroq qilaman.",
                 chat_id=chat_id
             )
             return
         else:
-            # Vaqt aytilmagan bo'lsa -> DARHOL QO'NG'IROQ (1 soniyada)
-            await send_telegram_message(
-                "📞 <b>Hoziroq 2-akkauntdan (Caller Userbot) Telegram audio qo'ng'iroq yuborilmoqda...</b>\n"
-                "Asosiy profilingizda 35 soniya davomida qo'ng'iroq (gudok) jiringlaydi.",
-                chat_id=chat_id
-            )
-            call_success = await make_telegram_call("Behruzbek, so'rovingiz bo'yicha qo'ng'iroq qilyapman!")
-            if not call_success:
+            # Vaqt aytilmagan bo'lsa -> DARHOL 2-AKKAUNT AUDIO QO'NG'IROG'I (1 soniyada)
+            call_success, call_info = await make_telegram_call_detailed("Behruzbek, so'rovingiz bo'yicha qo'ng'iroq qilyapman!")
+            if call_success:
+                caller_tag = call_info or "2-chi akkaunt"
                 await send_telegram_message(
-                    "❌ <b>Qo'ng'iroq qilishda xatolik yuz berdi.</b>\n"
-                    "CALLER_STRING_SESSION yoki Telegram Privacy sozlamalarini tekshiring.",
+                    f"📲 <b>2-chi akkauntdan ({caller_tag}) sizning Telegramingizga audio qo'ng'iroq yuborildi!</b>\n"
+                    "Qo'ng'iroq 35 soniya davomida jiringlab turadi.",
+                    chat_id=chat_id
+                )
+            else:
+                await send_telegram_message(
+                    f"❌ <b>Qo'ng'iroq qilishda xatolik yuz berdi:</b>\n"
+                    f"<code>{call_info}</code>",
                     chat_id=chat_id
                 )
             return
