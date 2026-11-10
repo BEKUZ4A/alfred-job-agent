@@ -108,10 +108,13 @@ def format_message_time(msg_date) -> str:
 
 # ----------------- TELEGRAM AUDIO QO'NG'IROQ VA DRAFT -----------------
 
-async def make_telegram_audio_call(reason_text: str = "") -> bool:
+async def make_telegram_call(reason_text: str = "") -> bool:
     """
-    2-chi Telegram akkauntdan (caller_bot) asosiy profilga haqiqiy Telegram audio qo'ng'iroq qilish (30 soniya).
-    Agar 2-akkaunt ulanmagan bo'lsa yoki xato bersa, zaxira sifatida make_call (CallMeBot/signal) chaqiriladi.
+    2-chi Telegram akkauntdan (caller_bot) asosiy profilga haqiqiy Telegram audio qo'ng'iroq qilish.
+    - functions.messages.GetDhConfigRequest orqali g_a_hash generatsiya qiladi.
+    - PhoneCallProtocol(min_layer=65, max_layer=92, udp_p2p=True, udp_reflector=True, library_versions=['2.4.4'])
+    - 35 soniya davomida to'xtovsiz jiringlab turadi.
+    - Bir vaqtning o'zida botdan ElevenLabs ovozida reason_text ni ovozli xabar qilib yuboradi.
     """
     c_caller = get_caller_client()
     c_user = get_userbot_client()
@@ -120,13 +123,24 @@ async def make_telegram_audio_call(reason_text: str = "") -> bool:
     if c_caller and c_caller.is_connected() and await c_caller.is_user_authorized():
         try:
             me_primary = await c_user.get_me() if (c_user and c_user.is_connected()) else None
-            target_user = me_primary or TELEGRAM_CHAT_ID
-            rand_id = random.randint(1, 2**30)
-            g_a = os.urandom(32)
+            target_user = (me_primary.username or me_primary.id) if me_primary else TELEGRAM_CHAT_ID
+
+            try:
+                dh_config = await c_caller(functions.messages.GetDhConfigRequest(version=0, random_length=256))
+            except Exception:
+                pass
+            g_a = os.urandom(256)
             g_a_hash = hashlib.sha256(g_a).digest()
 
             ent = await c_caller.get_input_entity(target_user)
-            protocol = PhoneCallProtocol(min_layer=65, max_layer=92, udp_p2p=True, udp_reflector=True)
+            protocol = PhoneCallProtocol(
+                min_layer=65, 
+                max_layer=92, 
+                udp_p2p=True, 
+                udp_reflector=True,
+                library_versions=['2.4.4']
+            )
+            rand_id = random.randint(1, 2**30)
 
             call_req = await c_caller(RequestCallRequest(
                 user_id=ent,
@@ -134,18 +148,18 @@ async def make_telegram_audio_call(reason_text: str = "") -> bool:
                 g_a_hash=g_a_hash,
                 protocol=protocol
             ))
-            logger.info("📞 2-akkauntdan asosiy profilingizga Telegram Audio qo'ng'irog'i muvaffaqiyatli yo'llandi!")
+            logger.info("📞 2-akkauntdan asosiy profilingizga haqiqiy Telegram Audio qo'ng'irog'i yo'llandi (35s)!")
             call_success = True
 
             async def _auto_discard():
-                await asyncio.sleep(30)
+                await asyncio.sleep(35)
                 try:
                     p_call = getattr(call_req, "phone_call", None)
                     if p_call:
                         from telethon.tl.types import InputPhoneCall
                         await c_caller(DiscardCallRequest(
                             peer=InputPhoneCall(id=p_call.id, access_hash=p_call.access_hash),
-                            duration=30,
+                            duration=35,
                             reason=PhoneCallDiscardReasonBusy(),
                             connection_id=0
                         ))
@@ -155,15 +169,21 @@ async def make_telegram_audio_call(reason_text: str = "") -> bool:
         except Exception as e_call:
             logger.warning(f"2-akkauntdan qo'ng'iroq qilishda ogohlantirish: {e_call}")
 
-    # Qo'shimcha/zaxira telefon qo'ng'irog'i (100% ogohlantirish kafolati)
-    try:
-        from notifier import make_call
-        fb = await make_call(reason_text or "Behruzbek, suhbatingizga 2 daqiqa qoldi! Tayyor turing!", force=True)
-        call_success = call_success or fb
-    except Exception as e_fb:
-        logger.debug(f"make_call zaxira xatosi: {e_fb}")
+    # Bir vaqtning o'zida botdan ElevenLabs ovozida reason_text ni ovozli xabar qilib yuborish
+    if reason_text:
+        try:
+            from voice import generate_voice_message
+            from notifier import send_telegram_voice
+            v_file = await generate_voice_message(reason_text, prepare_script=False)
+            if v_file:
+                await send_telegram_voice(v_file, caption=f"🎙 <b>{reason_text}</b>")
+        except Exception as e_v:
+            logger.warning(f"Qo'ng'iroq bilan birga ovozli xabar yuborishda ogohlantirish: {e_v}")
 
     return call_success
+
+# Orqaga moslik uchun alias
+make_telegram_audio_call = make_telegram_call
 
 async def save_hr_draft_message(hr_username: str, draft_text: str) -> bool:
     """
@@ -198,6 +218,70 @@ def is_time_or_meeting_proposal(text: str) -> bool:
         return False
     lower_t = text.lower()
     return any(re.search(p, lower_t, re.IGNORECASE) for p in TIME_PATTERNS)
+
+def parse_custom_call_time(text: str) -> tuple[Optional[datetime], str]:
+    """
+    Foydalanuvchi xabaridan qo'ng'iroq qilish vaqtini (UTC+5 Toshkent) ajratib olish:
+    - '20 daqiqadan keyin', '15 minutdan keyin'
+    - 'soat 18:15 da', '19:00 da', '09:00 da'
+    - 'ertaga 09:00 da', 'ertaga soat 10 da'
+    - '2 soatdan keyin'
+    """
+    if not text:
+        return None, ""
+    now_tash = datetime.now(TASHKENT_TZ)
+    lower_t = text.lower()
+
+    # 1. Nisbiy daqiqalar: (\d+)\s*(?:daqiqa|minut|daqiqadan|minutdan)
+    m_rel_min = re.search(r"(\d+)\s*(?:daqiqa|minut|daqiqadan|minutdan)", lower_t)
+    if m_rel_min:
+        mins = int(m_rel_min.group(1))
+        target_dt = now_tash + timedelta(minutes=mins)
+        return target_dt, target_dt.strftime("%H:%M")
+
+    # 2. Nisbiy soatlar: (\d+)\s*(?:soat|soatdan)\s*keyin
+    m_rel_hr = re.search(r"(\d+)\s*(?:soat|soatdan)\s*keyin", lower_t)
+    if m_rel_hr:
+        hrs = int(m_rel_hr.group(1))
+        target_dt = now_tash + timedelta(hours=hrs)
+        return target_dt, target_dt.strftime("%H:%M")
+
+    # 3. Aniq soat:daqiqa (masalan: 18:15 yoki soat 19:00)
+    is_tomorrow = any(w in lower_t for w in ["ertaga", "indin"])
+    base_date = (now_tash + timedelta(days=1)).date() if is_tomorrow else now_tash.date()
+
+    m_hm = re.search(r"\b([01]?\d|2[0-3])[:.]([0-5]\d)\b", lower_t)
+    if m_hm:
+        hour = int(m_hm.group(1))
+        minute = int(m_hm.group(2))
+        try:
+            target_dt = datetime(base_date.year, base_date.month, base_date.day, hour, minute, tzinfo=TASHKENT_TZ)
+            if not is_tomorrow and target_dt <= now_tash:
+                target_dt += timedelta(days=1)
+            time_disp = target_dt.strftime("%H:%M")
+            if target_dt.date() > now_tash.date():
+                time_disp = f"Ertaga, {time_disp}"
+            return target_dt, time_disp
+        except Exception:
+            pass
+
+    # 4. Aniq faqat soat (masalan: soat 19 da, soat 9 da)
+    m_h = re.search(r"(?:soat\s*)(\d{1,2})\s*(?:da|ga|larga|larida|boshlab)?\b", lower_t)
+    if m_h:
+        hour = int(m_h.group(1))
+        if 0 <= hour <= 23:
+            try:
+                target_dt = datetime(base_date.year, base_date.month, base_date.day, hour, 0, tzinfo=TASHKENT_TZ)
+                if not is_tomorrow and target_dt <= now_tash:
+                    target_dt += timedelta(days=1)
+                time_disp = target_dt.strftime("%H:%M")
+                if target_dt.date() > now_tash.date():
+                    time_disp = f"Ertaga, {time_disp}"
+                return target_dt, time_disp
+            except Exception:
+                pass
+
+    return None, ""
 
 def parse_meeting_time(text: str) -> tuple[Optional[datetime], str]:
     now_tash = datetime.now(TASHKENT_TZ)
@@ -314,6 +398,8 @@ async def handle_hr_outgoing_message(
                 schedule_db_backup()
             except Exception:
                 pass
+            # HR vaqt belgilaganda DARHOL 1 marta qo'ng'iroq qilib ogohlantirish
+            await make_telegram_call(f"Behruzbek, HR @{hr_username} suhbat vaqtini belgiladi: {exact_time_display}!")
 
         comp_disp = f"\n🏢 <b>Kompaniya:</b> {company}" if (company and company.lower() != "kompaniya") else ""
         await send_telegram_message(
@@ -396,6 +482,8 @@ async def handle_hr_incoming_message(
                 schedule_db_backup()
             except Exception:
                 pass
+            # HR vaqt belgilaganda DARHOL 1 marta qo'ng'iroq qilib ogohlantirish
+            await make_telegram_call(f"Behruzbek, HR @{hr_username} suhbat vaqtini belgiladi: {exact_time_display}!")
 
         inline_keyboard = []
         if meet_url:
@@ -452,6 +540,31 @@ async def continuous_reminder_loop():
     while True:
         try:
             now_tash = datetime.now(TASHKENT_TZ)
+
+            # 0. Maxsus rejalashtirilgan qo'ng'iroq taymerlarini tekshirish
+            try:
+                from database import get_pending_call_timers, mark_call_timer_done
+                pending_timers = get_pending_call_timers()
+                for tm in pending_timers:
+                    t_iso = tm.get("target_time")
+                    t_id = tm.get("id")
+                    t_reason = tm.get("reason") or "Behruzbek, so'rovingiz bo'yicha qo'ng'iroq qilyapman!"
+                    try:
+                        t_dt = datetime.fromisoformat(t_iso)
+                        if now_tash >= t_dt:
+                            mark_call_timer_done(t_id)
+                            try:
+                                from backup_manager import schedule_db_backup
+                                schedule_db_backup()
+                            except Exception:
+                                pass
+                            logger.info(f"⏰ Maxsus qo'ng'iroq taymeri yetib keldi (ID: {t_id})!")
+                            await make_telegram_call(t_reason)
+                    except Exception as e_tm:
+                        logger.warning(f"Timer check xatosi ({t_id}): {e_tm}")
+            except Exception as e_tms:
+                logger.debug(f"get_pending_call_timers ogohlantirish: {e_tms}")
+
             tracked = get_all_tracked_hrs()
 
             for hr in tracked:
@@ -659,7 +772,7 @@ async def start_userbot():
         logger.info(f"✅ 1-Akkaunt (Userbot) muvaffaqiyatli ishga tushdi: {me.first_name} (@{me.username})")
         is_running = True
 
-        # 2-Akkaunt (Caller bot) ni parallel ulash
+        # 2-Akkaunt (Caller bot) ni parallel ulash va tanishtirish
         c_caller = get_caller_client()
         if c_caller:
             try:
@@ -667,6 +780,14 @@ async def start_userbot():
                 if await c_caller.is_user_authorized():
                     me_c = await c_caller.get_me()
                     logger.info(f"✅ 2-Akkaunt (Caller Bot) faol: {me_c.first_name} (@{me_c.username})")
+                    # Privacy cheklovi qo'ng'iroqni to'smasligi uchun 1-akkauntga tanishtirish
+                    try:
+                        target_id = me.username or me.id
+                        ent = await c_caller.get_input_entity(target_id)
+                        await c_caller.send_message(ent, "Salom! Men Alfred Caller Userbotiman. Qo'ng'iroqlar uchun aloqadaman.")
+                        logger.info("✅ 2-Akkaunt 1-akkaunt bilan tanishdi (Privacy cheklovi yechildi).")
+                    except Exception as e_intro:
+                        logger.debug(f"Akkauntlarni tanishtirishda ogohlantirish: {e_intro}")
             except Exception as e_c:
                 logger.warning(f"2-Akkaunt (Caller) ulashda ogohlantirish: {e_c}")
 

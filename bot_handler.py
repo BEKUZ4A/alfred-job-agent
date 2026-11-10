@@ -710,9 +710,13 @@ async def process_telegram_update(update: Dict[str, Any], trigger_scan_callback=
                             [{"text": btn_text, "callback_data": "noop_hr_sent"}]
                         ]
                     })
+                # Suhbat kelishilgan zahoti DARHOL 1 marta qo'ng'iroq qilib ogohlantirish
+                from userbot import make_telegram_call
+                await make_telegram_call(f"Behruzbek, siz HR @{username} bilan suhbatni soat {time_disp} ga kelishdingiz!")
+
                 await send_telegram_message(
                     f"✅ <b>Siz HR (@{username}) bilan o'zingiz gaplashib, suhbatni soat {time_disp} ga kelishdingiz!</b>\n"
-                    f"🔔 2 daqiqa qolganda qo'ng'iroq va eslatma yuboraman.",
+                    f"🔔 1 marta qo'ng'iroq qilindi va suhbatga 2 daqiqa qolganda sizga yana qo'ng'iroq qilaman.",
                     chat_id=cb_chat_id
                 )
             else:
@@ -886,27 +890,46 @@ async def process_telegram_update(update: Dict[str, Any], trigger_scan_callback=
         await send_telegram_message(welcome_text, chat_id=chat_id)
         return
 
-    # 2. /call yoki /test_call buyrug'i (2-akkaunt Caller Userbot orqali haqiqiy Telegram qo'ng'irog'i)
-    if text in ["/test_call", "/call", "/testcall", "call", "Call"]:
-        await send_telegram_message(
-            "📞 <b>2-Akkaunt (Caller Userbot) orqali Telegram audio qo'ng'iroq yuborilmoqda...</b>\n"
-            "Asosiy profilingizda 30 soniya davomida qo'ng'iroq (gudok) jiringlaydi.",
-            chat_id=chat_id
-        )
-        from userbot import make_telegram_audio_call
-        call_success = await make_telegram_audio_call("Alfred AI test audio qo'ng'irog'i")
-        if call_success:
+    # 2. Telegram Audio qo'ng'iroq va Taymerlar (Darhol yoki Aytilgan vaqtda)
+    call_triggers = [
+        "menga telefon qil", "telefon qil", "telefon qilib", "qo'ng'iroq qilvor", 
+        "qongiroq qilvor", "qo'ng'iroq qil", "qongiroq qil", "gudok tashla", 
+        "gudok ber", "uyg'ot"
+    ]
+    lower_t = text.lower().strip()
+    is_call_req = (text in ["/test_call", "/call", "/testcall", "call", "Call"]) or any(ct in lower_t for ct in call_triggers)
+
+    if is_call_req:
+        from userbot import parse_custom_call_time, make_telegram_call
+        from database import add_custom_call_timer
+        from backup_manager import schedule_db_backup
+
+        target_dt, time_disp = parse_custom_call_time(text)
+        if target_dt:
+            # Aniq vaqt aytilgan bo'lsa -> Custom Call Timer (#ALFRED_DB_BACKUP)
+            add_custom_call_timer(target_dt.isoformat(), reason=text)
+            schedule_db_backup()
             await send_telegram_message(
-                "✅ <b>Telegram audio qo'ng'iroq muvaffaqiyatli yuborildi!</b>",
+                f"⏰ <b>Qo'ng'iroq taymeri o'rnatildi!</b>\n\n"
+                f"📞 Sizga soat <b>{time_disp}</b> da 2-akkaunt orqali Telegramdan qo'ng'iroq qilaman.",
                 chat_id=chat_id
             )
+            return
         else:
+            # Vaqt aytilmagan bo'lsa -> DARHOL QO'NG'IROQ (1 soniyada)
             await send_telegram_message(
-                "❌ <b>Qo'ng'iroq qilishda xatolik yuz berdi.</b>\n"
-                "CALLER_STRING_SESSION yoki Telegram Privacy sozlamalarini tekshiring.",
+                "📞 <b>Hoziroq 2-akkauntdan (Caller Userbot) Telegram audio qo'ng'iroq yuborilmoqda...</b>\n"
+                "Asosiy profilingizda 35 soniya davomida qo'ng'iroq (gudok) jiringlaydi.",
                 chat_id=chat_id
             )
-        return
+            call_success = await make_telegram_call("Behruzbek, so'rovingiz bo'yicha qo'ng'iroq qilyapman!")
+            if not call_success:
+                await send_telegram_message(
+                    "❌ <b>Qo'ng'iroq qilishda xatolik yuz berdi.</b>\n"
+                    "CALLER_STRING_SESSION yoki Telegram Privacy sozlamalarini tekshiring.",
+                    chat_id=chat_id
+                )
+            return
 
     # 2.1. /reload buyrug'i (Serverni o'chirmasdan 2 soniyada hot-reload)
     if text in ["/reload", "reload", "Reload"]:

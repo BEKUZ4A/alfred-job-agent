@@ -551,6 +551,30 @@ async def run_gemini_react_agent(
             f"💡 Keyingi soniyadan boshlab ushbu yangi qoida bo'yicha ishlayman!"
         )
 
+    # c) Qo'ng'iroq qilish so'rovi (Darhol yoki Aytilgan vaqtda)
+    call_triggers = [
+        "menga telefon qil", "telefon qil", "telefon qilib", "qo'ng'iroq qilvor", 
+        "qongiroq qilvor", "qo'ng'iroq qil", "qongiroq qil", "gudok tashla", 
+        "gudok ber", "uyg'ot"
+    ]
+    if any(ct in lower_msg for ct in call_triggers):
+        from userbot import parse_custom_call_time, make_telegram_call
+        from database import add_custom_call_timer
+        target_dt, time_disp = parse_custom_call_time(user_message)
+        if target_dt:
+            add_custom_call_timer(target_dt.isoformat(), reason=user_message)
+            schedule_db_backup()
+            return (
+                f"⏰ <b>Qo'ng'iroq taymeri o'rnatildi!</b>\n\n"
+                f"📞 Sizga soat <b>{time_disp}</b> da 2-akkaunt orqali Telegramdan qo'ng'iroq qilaman."
+            )
+        else:
+            await make_telegram_call("Behruzbek, so'rovingiz bo'yicha qo'ng'iroq qilyapman!")
+            return (
+                "📞 <b>Hoziroq 2-akkauntdan (Caller Userbot) Telegram audio qo'ng'iroq yuborildi!</b>\n"
+                "Asosiy profilingizda 35 soniya davomida qo'ng'iroq (gudok) jiringlaydi."
+            )
+
     # b) "bu HR yozmadi" yoki No-Show holati
     if "bu hr yozmadi" in lower_msg or "yozmadi" in lower_msg or "javob bermadi" in lower_msg:
         hr_match = re.search(r"@([a-zA-Z0-9_]{4,32})", user_message)

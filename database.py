@@ -156,6 +156,15 @@ def init_db():
             added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
         """)
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS custom_call_timers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            target_time TEXT,
+            reason TEXT DEFAULT '',
+            is_done INTEGER DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        ''')
         cursor.execute("""
         CREATE TABLE IF NOT EXISTS managed_keywords (
             keyword TEXT PRIMARY KEY,
@@ -559,6 +568,7 @@ def get_backup_data() -> Dict[str, Any]:
         "tracked_hrs": tracked_hrs_dict,
         "seen_job_hashes": seen_hashes,
         "applied_jobs": applied_rows,
+        "custom_call_timers": get_pending_call_timers(),
         "updated_at": datetime.now(TASHKENT_TZ).isoformat()
     }
 
@@ -613,8 +623,48 @@ def restore_from_backup_data(data: Dict[str, Any]) -> bool:
             c_hash = item.get("content_hash") or ""
             if v_id:
                 mark_job_applied(v_id, title, comp, url, content_hash=c_hash)
+
+        # 4. Restore custom call timers
+        timers = data.get("custom_call_timers", [])
+        for t in timers:
+            t_time = t.get("target_time")
+            t_reason = t.get("reason", "")
+            if t_time:
+                exist = execute_query("SELECT id FROM custom_call_timers WHERE target_time = ? AND is_done = 0", (t_time,), fetch_one=True)
+                if not exist:
+                    add_custom_call_timer(t_time, t_reason)
+
         return True
     except Exception as e:
         import logging
         logging.getLogger("Alfred.Database").error(f"restore_from_backup_data xatosi: {e}")
         return False
+
+def add_custom_call_timer(target_time_iso: str, reason: str = "") -> int:
+    """Foydalanuvchi aytgan vaqtda qo'ng'iroq qilish taymerini saqlash"""
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO custom_call_timers (target_time, reason, is_done) VALUES (?, ?, 0)",
+            (target_time_iso, reason)
+        )
+        conn.commit()
+        return cursor.lastrowid or 1
+    finally:
+        conn.close()
+
+def get_pending_call_timers() -> List[Dict[str, Any]]:
+    """Kutilayotgan faol qo'ng'iroq taymerlarini olish"""
+    return execute_query(
+        "SELECT * FROM custom_call_timers WHERE is_done = 0 ORDER BY target_time ASC",
+        fetch_all=True
+    ) or []
+
+def mark_call_timer_done(timer_id: int):
+    """Qo'ng'iroq bajarildi deb belgilash"""
+    execute_query(
+        "UPDATE custom_call_timers SET is_done = 1 WHERE id = ?",
+        (timer_id,),
+        commit=True
+    )
