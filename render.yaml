@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: alfred-vacancy-agent
+    name: alfred-job-agent
     runtime: python
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
@@ -13,7 +13,15 @@ services:
         sync: false
       - key: TELEGRAM_CHAT_ID
         sync: false
-      - key: CALLMEBOT_USERNAME
+      - key: TELEGRAM_STRING_SESSION
+        sync: false
+      - key: TELEGRAM_API_ID
+        sync: false
+      - key: TELEGRAM_API_HASH
+        sync: false
+      - key: CALLER_STRING_SESSION
+        sync: false
+      - key: CALLER_PHONE
         sync: false
       - key: MIN_MATCH_SCORE
         value: "65"

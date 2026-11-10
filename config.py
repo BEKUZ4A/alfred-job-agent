@@ -14,22 +14,24 @@ CALL_END_HOUR = int(os.getenv("CALL_END_HOUR", "20"))
 # Bitta qidiruvda jo'natiladigan maksimal yangi mos vakansiyalar soni
 MAX_MATCHES_PER_SCAN = int(os.getenv("MAX_MATCHES_PER_SCAN", "10"))
 
+# Standart Hardcode Zaxira sozlamalari (Render Environment bo'sh bo'lganda ham 100% ishlashi uchun)
+DEFAULT_CALLER_SESSION = "1ApWapzMBuxQkD8duazRqHaglmuNTOOhhBpXfUat8haM6ryl_w5eo1C8twjxr0PCqtJ3mOIw-JSycj0yeCVilGtgTSoYKUKxTxgwGmxoOulNqOlm4lR2RqWJYr2M9NcQEFJqwJ3PH5Ue4z_T60h65tQqzgkCPblXDew7C2ZbFr2istHHkwg87XuFQ_0nEkEkXkQeCxDYnyRWCoUbG6ciYCh7H6YtwYbJJnW65cn7nTgpFxmuKZN1ubNNSViKCR_2XCkGjr7dwKnkbPEMLERexT6quypfDl7WBVrHq6PdSLvYKKEkVppZcKXo3LC9dbWuLOmSmnMWMqqi7opnhJUDFnBU-04jj7uY="
+DEFAULT_CALLER_PHONE = "+998930037685"
+
 # Telegram Bot sozlamalari
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip().strip("'\"")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip().strip("'\"")
 
 # Telegram Userbot (Telethon 1-akkaunt: HR kuzatuvi va asosiy profil)
-TELEGRAM_API_ID = int(os.getenv("TELEGRAM_API_ID", "0").strip().strip("'\"")) if os.getenv("TELEGRAM_API_ID") else None
-TELEGRAM_API_HASH = os.getenv("TELEGRAM_API_HASH", "").strip().strip("'\"")
-TELEGRAM_STRING_SESSION = os.getenv("TELEGRAM_STRING_SESSION", "").strip().strip("'\"")
-TELEGRAM_PHONE = os.getenv("TELEGRAM_PHONE", "").strip().strip("'\"")
+_raw_api_id = (os.getenv("TELEGRAM_API_ID") or "").strip().strip("'\"")
+TELEGRAM_API_ID = int(_raw_api_id) if _raw_api_id.isdigit() else 32420165
+TELEGRAM_API_HASH = (os.getenv("TELEGRAM_API_HASH") or "").strip().strip("'\"") or "721ad5ccdbf90d377435798b3ddf8b46"
+TELEGRAM_STRING_SESSION = (os.getenv("TELEGRAM_STRING_SESSION") or "").strip().strip("'\"")
+TELEGRAM_PHONE = (os.getenv("TELEGRAM_PHONE") or "").strip().strip("'\"") or "+998999875186"
 
 # Telegram Caller Userbot (Telethon 2-akkaunt: Audio qo'ng'iroq / Gudok beruvchi)
-DEFAULT_CALLER_SESSION = "1ApWapzMBuxQkD8duazRqHaglmuNTOOhhBpXfUat8haM6ryl_w5eo1C8twjxr0PCqtJ3mOIw-JSycj0yeCVilGtgTSoYKUKxTxgwGmxoOulNqOlm4lR2RqWJYr2M9NcQEFJqwJ3PH5Ue4z_T60h65tQqzgkCPblXDew7C2ZbFr2istHHkwg87XuFQ_0nEkEkXkQeCxDYnyRWCoUbG6ciYCh7H6YtwYbJJnW65cn7nTgpFxmuKZN1ubNNSViKCR_2XCkGjr7dwKnkbPEMLERexT6quypfDl7WBVrHq6PdSLvYKKEkVppZcKXo3LC9dbWuLOmSmnMWMqqi7opnhJUDFnBU-04jj7uY="
-DEFAULT_CALLER_PHONE = "+998930037685"
-
 CALLER_STRING_SESSION = (os.getenv("CALLER_STRING_SESSION") or "").strip().strip("'\"") or DEFAULT_CALLER_SESSION
-CALLER_PHONE = (os.getenv("CALLER_PHONE") or "").strip().strip("'\"") or DEFAULT_CALLER_PHONE.strip("'\"")
+CALLER_PHONE = (os.getenv("CALLER_PHONE") or "").strip().strip("'\"") or DEFAULT_CALLER_PHONE
 
 # Ma'lumotlar bazasi (PostgreSQL / Neon.tech yoki SQLite)
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()

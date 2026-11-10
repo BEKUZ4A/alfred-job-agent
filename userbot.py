@@ -545,6 +545,18 @@ async def handle_hr_incoming_message(
             reply_markup={"inline_keyboard": inline_keyboard}
         )
 
+async def schedule_2min_reminder(target_dt: datetime, hr_username: str, company: str = "", time_display: str = ""):
+    """HR suhbat vaqtini bazada saqlash va 2 daqiqalik eslatmani rejalashtirish"""
+    try:
+        from database import update_hr_interview_time, track_hr
+        track_hr(hr_username, company=company, source="direct_agreement")
+        update_hr_interview_time(hr_username, target_dt.isoformat(), reminded_2min=False)
+        from backup_manager import schedule_db_backup
+        schedule_db_backup()
+        logger.info(f"✅ @{hr_username} uchun 2 daqiqalik eslatma rejalashtirildi: {target_dt}")
+    except Exception as e:
+        logger.warning(f"schedule_2min_reminder ogohlantirish: {e}")
+
 # ----------------- 2 DAQIQALIK ESLATMA VA NO-SHOW SIKLI -----------------
 
 async def continuous_reminder_loop():
