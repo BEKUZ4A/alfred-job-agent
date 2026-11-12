@@ -854,6 +854,36 @@ async def process_telegram_update(update: Dict[str, Any], trigger_scan_callback=
     voice = message.get("voice") or message.get("audio")
     is_voice_input = bool(voice)
 
+    # 0. Agar ovozli xabar kelsa — Gemini orqali eshitib, matnga aylantirish (Voice-to-Voice)
+    if voice:
+        file_id = voice.get("file_id")
+        await send_telegram_message(
+            "🎙 <i>Ovozli xabaringiz qabul qilindi, eshitilmoqda...</i>",
+            chat_id=chat_id
+        )
+        audio_bytes = await download_telegram_file(file_id)
+        if audio_bytes:
+            from ai_analyzer import transcribe_voice_with_gemini
+            transcribed = await transcribe_voice_with_gemini(audio_bytes, mime_type="audio/ogg")
+            if transcribed:
+                text = transcribed.strip()
+                await send_telegram_message(
+                    f"🎙 <b>Eshitildi:</b> <i>\"{text}\"</i>",
+                    chat_id=chat_id
+                )
+            else:
+                await send_telegram_message(
+                    "⚠️ <b>Ovozingizni aniqlab bo'lmadi.</b> Iltimos, aniqroq gapirib qayta yuboring.",
+                    chat_id=chat_id
+                )
+                return
+        else:
+            await send_telegram_message(
+                "❌ <i>Ovozli xabarni Telegramdan yuklab bo'lmadi. Iltimos, qayta yuboring.</i>",
+                chat_id=chat_id
+            )
+            return
+
     # Agar rasm yoki skrinshot izohida matn bo'lsa
     if not text and caption:
         text = caption
@@ -922,10 +952,23 @@ async def process_telegram_update(update: Dict[str, Any], trigger_scan_callback=
             call_success, call_info = await make_telegram_call_detailed("Behruzbek, so'rovingiz bo'yicha qo'ng'iroq qilyapman!", force=True)
             if call_success:
                 caller_tag = call_info or "2-chi akkaunt"
+                live_url = "https://alfred-job-agent.onrender.com/live"
+                reply_markup = {
+                    "inline_keyboard": [
+                        [
+                            {"text": "📞 Alfred bilan Jonli Gaplashish", "web_app": {"url": live_url}}
+                        ],
+                        [
+                            {"text": "🌐 Jonli Oyna (Brauzer)", "url": live_url}
+                        ]
+                    ]
+                }
                 await send_telegram_message(
                     f"📲 <b>2-chi akkauntdan ({caller_tag}) sizning Telegramingizga audio qo'ng'iroq yuborildi!</b>\n"
-                    "Qo'ng'iroq 20 soniya davomida jiringlab turadi.",
-                    chat_id=chat_id
+                    "Qo'ng'iroq 20 soniya davomida jiringlab turadi.\n\n"
+                    "💡 <i>Go'shakni ko'tarsangiz yoki quyidagi tugmani bossangiz, Alfred bilan to'g'ridan-to'g'ri ovozda suhbatlashishingiz mumkin:</i>",
+                    chat_id=chat_id,
+                    reply_markup=reply_markup
                 )
             else:
                 await send_telegram_message(
@@ -1160,35 +1203,6 @@ async def process_telegram_update(update: Dict[str, Any], trigger_scan_callback=
             await send_telegram_message(f"🗑 <b>Kalit so'z o'chirildi:</b> <code>{parts[1]}</code>", chat_id=chat_id)
             return
         
-    # 4. Ovozli xabar kelsa — Gemini orqali eshitib, matnga aylantirish (transkripsiya)
-    if voice:
-        file_id = voice.get("file_id")
-        await send_telegram_message(
-            "🎙 <i>Ovozli xabaringiz qabul qilindi, eshitilmoqda...</i>",
-            chat_id=chat_id
-        )
-        audio_bytes = await download_telegram_file(file_id)
-        if not audio_bytes:
-            await send_telegram_message(
-                "❌ <i>Ovozli xabarni Telegramdan yuklab bo'lmadi. Iltimos, qayta yuboring.</i>",
-                chat_id=chat_id
-            )
-            return
-
-        transcribed = await transcribe_voice_with_gemini(audio_bytes, mime_type="audio/ogg")
-        if not transcribed:
-            await send_telegram_message(
-                "⚠️ <b>Ovozingizni aniqlab bo'lmadi.</b> Iltimos, aniqroq gapirib qayta yuboring yoki matn ko'rinishida yozing.",
-                chat_id=chat_id
-            )
-            return
-
-        await send_telegram_message(
-            f"🎙 <b>Eshitildi:</b> <i>\"{transcribed}\"</i>",
-            chat_id=chat_id
-        )
-        text = transcribed.strip()
-
     # 4.4. BOSHQA KANALDAN UZATILGAN (FORWARD) XABAR KELGANDA
     if is_forward and text and len(text) > 15:
         logger.info(f"Forward qilingan vakansiya aniqlandi ({len(text)} belgi)")

@@ -113,6 +113,11 @@ def init_db():
             keyword TEXT PRIMARY KEY,
             added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
+        CREATE TABLE IF NOT EXISTS channel_last_ids (
+            channel TEXT PRIMARY KEY,
+            last_msg_id BIGINT DEFAULT 0,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
         """)
     else:
         cursor.execute("""
@@ -181,6 +186,13 @@ def init_db():
             added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
         """)
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS channel_last_ids (
+            channel TEXT PRIMARY KEY,
+            last_msg_id INTEGER DEFAULT 0,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """)
         
         # Ustunlar mavjudligini tekshirish
         for col, col_type in [
@@ -225,32 +237,94 @@ def init_db():
     conn.commit()
     conn.close()
 
+# ----------------- KANAL XABAR ID LARI (QULF 2) -----------------
+
+def get_channel_last_id(channel: str) -> int:
+    """Kanal uchun eng oxirgi o'qilgan Telegram xabar ID sini olish"""
+    ch = str(channel).strip().lstrip("@").lower()
+    row = execute_query("SELECT last_msg_id FROM channel_last_ids WHERE LOWER(channel) = ?", (ch,), fetch_one=True)
+    return int(row["last_msg_id"]) if row and row.get("last_msg_id") else 0
+
+def set_channel_last_id(channel: str, msg_id: int):
+    """Kanal uchun oxirgi o'qilgan xabar ID sini saqlash / yangilash"""
+    ch = str(channel).strip().lstrip("@").lower()
+    if not ch or not msg_id:
+        return
+    if is_postgres():
+        execute_query("""
+        INSERT INTO channel_last_ids (channel, last_msg_id, updated_at)
+        VALUES (?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT (channel) DO UPDATE SET last_msg_id = GREATEST(channel_last_ids.last_msg_id, EXCLUDED.last_msg_id), updated_at = CURRENT_TIMESTAMP
+        """, (ch, int(msg_id)), commit=True)
+    else:
+        execute_query("""
+        INSERT INTO channel_last_ids (channel, last_msg_id, updated_at)
+        VALUES (?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(channel) DO UPDATE SET last_msg_id = MAX(channel_last_ids.last_msg_id, excluded.last_msg_id), updated_at = CURRENT_TIMESTAMP
+        """, (ch, int(msg_id)), commit=True)
+
+def get_all_channel_last_ids() -> Dict[str, int]:
+    """Barcha kanallarning oxirgi ID larini olish (backup uchun)"""
+    rows = execute_query("SELECT channel, last_msg_id FROM channel_last_ids", fetch_all=True) or []
+    return {r["channel"]: int(r["last_msg_id"]) for r in rows if r.get("channel")}
+
+def set_all_channel_last_ids(mapping: Dict[str, int]):
+    """Backup dan barcha kanallar ID sini tiklash"""
+    if not mapping or not isinstance(mapping, dict):
+        return
+    for ch, mid in mapping.items():
+        try:
+            set_channel_last_id(ch, int(mid))
+        except Exception:
+            pass
+
 # ----------------- VAKANSIYALAR FUNKSIYALARI -----------------
+
+def compute_clean_text_hash(text: str = "") -> str:
+    """
+    QULF 3: Vakansiya matnidan barcha emoji, ssilka va bo'sh joylarni olib tashlab,
+    faqat kichik harflardagi dastlabki 120 ta belgidan SHA-256 xesh oladi (clean_hash).
+    """
+    clean = re.sub(r"https?://\S+|www\.\S+|t\.me/\S+", "", str(text or ""))
+    clean = re.sub(r"[^a-zA-Z0-9а-яА-ЯёЁo'g'shch]+", "", clean.lower())
+    prefix = clean[:120]
+    if not prefix:
+        return ""
+    return hashlib.sha256(prefix.encode("utf-8")).hexdigest()
+
+def compute_comp_title_hash(title: str = "", company: str = "") -> str:
+    """Kompaniya + lavozim nomidan unikal xesh oladi"""
+    c_title = re.sub(r"[^a-zA-Z0-9а-яА-ЯёЁo'g'shch]+", "", (title or "").lower())
+    c_comp = re.sub(r"[^a-zA-Z0-9а-яА-ЯёЁo'g'shch]+", "", (company or "").lower())
+    if not c_title and not c_comp:
+        return ""
+    return hashlib.sha256(f"{c_comp}:{c_title}".encode("utf-8")).hexdigest()
 
 def compute_content_hash(text: str = "", title: str = "", company: str = "") -> str:
     """
-    Vakansiya takrorlanmasligi (dublikat) uchun unikal xesh.
-    Matnning birinchi 150 ta harf va raqamlarini olib, sarlavha va kompaniya bilan xeshlaydi.
+    Vakansiya takrorlanmasligi (dublikat) uchun unikal clean_hash.
+    Matnning 120 ta toza harfidan olingan SHA-256 xesh.
     """
-    clean_title = re.sub(r"[^a-zA-Z0-9а-яА-ЯёЁo'g'shch]+", "", (title or "").lower())
-    clean_comp = re.sub(r"[^a-zA-Z0-9а-яА-ЯёЁo'g'shch]+", "", (company or "").lower())
-    clean_body = re.sub(r"[^a-zA-Z0-9а-яА-ЯёЁo'g'shch]+", "", (text or "").lower())[:150]
-    base_str = f"{clean_title}:{clean_comp}:{clean_body}"
-    return hashlib.sha256(base_str.encode("utf-8")).hexdigest()
+    h_text = compute_clean_text_hash(text)
+    if h_text:
+        return h_text
+    return compute_comp_title_hash(title, company)
 
 def is_vacancy_seen(
     vacancy_id: str, 
     url: Optional[str] = None, 
     content_hash: Optional[str] = None,
     title: Optional[str] = None,
-    company: Optional[str] = None
+    company: Optional[str] = None,
+    raw_text: Optional[str] = None
 ) -> bool:
     """
-    Vakansiya ilgari ko'rilganligini tekshirish:
+    Vakansiya ilgari ko'rilganligini 100% aniqlik bilan tekshirish:
     1. vacancy_id bo'yicha
     2. url (parametrlarisiz toza havola) bo'yicha
-    3. content_hash bo'yicha
-    4. title + company birikmasi bo'yicha
+    3. content_hash (120 belgilik toza xesh) bo'yicha
+    4. raw_text ning clean_hash si bo'yicha
+    5. title + company birikmasi va xeshi bo'yicha
     """
     if vacancy_id:
         row = execute_query("SELECT 1 FROM seen_vacancies WHERE id = ?", (vacancy_id,), fetch_one=True)
@@ -268,7 +342,14 @@ def is_vacancy_seen(
         if row:
             return True
 
-    if title and company and len(title.strip()) > 5:
+    if raw_text:
+        th = compute_clean_text_hash(raw_text)
+        if th:
+            row = execute_query("SELECT 1 FROM seen_vacancies WHERE content_hash = ?", (th,), fetch_one=True)
+            if row:
+                return True
+
+    if title and company and len(title.strip()) > 3:
         row = execute_query(
             "SELECT 1 FROM seen_vacancies WHERE LOWER(title) = ? AND LOWER(company) = ? AND company != ''", 
             (title.strip().lower(), company.strip().lower()), 
@@ -276,6 +357,11 @@ def is_vacancy_seen(
         )
         if row:
             return True
+        cth = compute_comp_title_hash(title, company)
+        if cth:
+            row = execute_query("SELECT 1 FROM seen_vacancies WHERE content_hash = ?", (cth,), fetch_one=True)
+            if row:
+                return True
 
     return False
 
@@ -602,17 +688,18 @@ def get_backup_data() -> Dict[str, Any]:
                 "no_show_notified": bool(h.get("no_show_notified")),
                 "status": h.get("status") or "waiting"
             }
-    # Seen job hashes
-    rows = execute_query("SELECT content_hash FROM seen_vacancies WHERE content_hash != '' ORDER BY created_at DESC LIMIT 500", fetch_all=True) or []
+    # Seen job hashes (oxirgi 1000 ta unikal xesh)
+    rows = execute_query("SELECT content_hash FROM seen_vacancies WHERE content_hash != '' ORDER BY created_at DESC LIMIT 1000", fetch_all=True) or []
     seen_hashes = list({r["content_hash"] for r in rows if r.get("content_hash")})
     # Applied jobs
-    applied_rows = execute_query("SELECT vacancy_id, title, company, url, content_hash FROM applied_jobs ORDER BY applied_at DESC LIMIT 100", fetch_all=True) or []
+    applied_rows = execute_query("SELECT vacancy_id, title, company, url, content_hash FROM applied_jobs ORDER BY applied_at DESC LIMIT 200", fetch_all=True) or []
     
     from datetime import datetime
     from config import TASHKENT_TZ
     return {
         "tracked_hrs": tracked_hrs_dict,
         "seen_job_hashes": seen_hashes,
+        "channel_last_ids": get_all_channel_last_ids(),
         "applied_jobs": applied_rows,
         "custom_call_timers": get_pending_call_timers(),
         "updated_at": datetime.now(TASHKENT_TZ).isoformat()
@@ -682,6 +769,11 @@ def restore_from_backup_data(data: Dict[str, Any]) -> bool:
                 exist = execute_query("SELECT id FROM custom_call_timers WHERE target_time = ? AND is_done = 0", (t_time,), fetch_one=True)
                 if not exist:
                     add_custom_call_timer(t_time, t_reason)
+
+        # 5. Restore channel last IDs (QULF 2)
+        ch_ids = data.get("channel_last_ids", {})
+        if ch_ids:
+            set_all_channel_last_ids(ch_ids)
 
         return True
     except Exception as e:

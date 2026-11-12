@@ -399,12 +399,28 @@ async def scrape_telegram_channel(channel: str, today_only: bool = True) -> List
             soup = bs4.BeautifulSoup(resp.text, "html.parser")
             messages = soup.find_all("div", class_="tgme_widget_message_wrap")
             
+            # QULF 2: Kanal oxirgi xabar ID sini olish
+            from database import get_channel_last_id, set_channel_last_id
+            last_saved_id = get_channel_last_id(clean_channel)
+            max_post_id = last_saved_id
+
             # Oxirgi 25 ta xabarni tekshiramiz
             for msg in messages[-25:]:
                 time_elem = msg.find("time")
                 if not time_elem or not time_elem.get("datetime"):
                     continue
                 dt_str = time_elem.get("datetime")
+                
+                # QULF 2: Chiqqaniga 12 soatdan oshgan (msg.date < now - 12 hours) eski e'lonlarni hech qachon olmaslik
+                try:
+                    clean_dt_str = dt_str.replace("Z", "+00:00")
+                    msg_dt = datetime.fromisoformat(clean_dt_str)
+                    now_utc = datetime.now(timezone.utc)
+                    if (now_utc - msg_dt).total_seconds() > 12 * 3600:
+                        continue
+                except Exception:
+                    pass
+
                 # QAT'IY SHART: Faqat BUGUNGI SANA (UTC+5 Toshkent) e'lonlarini olish, eskilarini tashlab ketish
                 if today_only and not is_published_today(dt_str):
                     continue
@@ -426,6 +442,16 @@ async def scrape_telegram_channel(channel: str, today_only: bool = True) -> List
                 date_elem = msg.find("a", class_="tgme_widget_message_date")
                 post_url = date_elem.get("href") if date_elem else f"https://t.me/{clean_channel}"
                 
+                # QULF 2: msg.id <= channel_last_ids[channel] bo'lsa UMUMAN O'QIMA
+                post_id_val = 0
+                p_match = re.search(r"/(\d+)$", post_url)
+                if p_match:
+                    post_id_val = int(p_match.group(1))
+                    if post_id_val > max_post_id:
+                        max_post_id = post_id_val
+                if post_id_val and last_saved_id and post_id_val <= last_saved_id:
+                    continue
+                
                 # Sarlavhani birinchi qatordan olish
                 lines = [line.strip() for line in raw_text.split("\n") if line.strip()]
                 title = lines[0][:80] if lines else "Telegram e'lon"
@@ -437,6 +463,8 @@ async def scrape_telegram_channel(channel: str, today_only: bool = True) -> List
                 vac_id = make_hash_id(clean_channel, post_url)
                 
                 hr_cand = extract_hr_username(raw_text)
+                from database import compute_content_hash
+                content_hash = compute_content_hash(raw_text, title, f"Telegram @{clean_channel}")
                 vacancies.append({
                     "id": vac_id,
                     "title": title,
@@ -446,8 +474,12 @@ async def scrape_telegram_channel(channel: str, today_only: bool = True) -> List
                     "source": f"@{clean_channel}",
                     "job_type": job_type,
                     "posted_at": dt_str,
-                    "hr_username": hr_cand
+                    "hr_username": hr_cand,
+                    "content_hash": content_hash
                 })
+
+            if max_post_id > last_saved_id:
+                set_channel_last_id(clean_channel, max_post_id)
     except Exception as e:
         logger.error(f"Telegram {clean_channel} kanalini o'qishda xatolik: {e}")
         
@@ -489,6 +521,9 @@ async def scrape_all_sources() -> List[Dict]:
                 v_id = item.get("id")
                 if v_id and v_id not in seen_ids:
                     seen_ids.add(v_id)
+                    if not item.get("content_hash"):
+                        from database import compute_content_hash
+                        item["content_hash"] = compute_content_hash(item.get("text", ""), item.get("title", ""), item.get("company", ""))
                     all_vacancies.append(item)
         elif isinstance(res, Exception):
             logger.error(f"Manbani skanerlashda parallel vazifa xatoligi: {res}")

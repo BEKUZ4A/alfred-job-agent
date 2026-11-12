@@ -191,6 +191,38 @@ async def ensure_caller_userbot_synced(c_user: TelegramClient, c_caller: Telegra
     except Exception as e_sync:
         logger.warning(f"ensure_caller_userbot_synced ogohlantirish: {e_sync}")
 
+async def send_call_answered_live_card():
+    """Go'shak ko'tarilganda darhol chatga ElevenLabs ovozli xabarini va Jonli WebApp tugmasini chiqarish"""
+    try:
+        from notifier import send_telegram_message, send_telegram_voice
+        from voice import generate_voice_message
+        from config import TELEGRAM_CHAT_ID
+
+        live_url = "https://alfred-job-agent.onrender.com/live"
+        reply_markup = {
+            "inline_keyboard": [
+                [
+                    {"text": "📞 Alfred bilan Jonli Ovozda Gaplashish", "web_app": {"url": live_url}}
+                ],
+                [
+                    {"text": "🌐 Jonli Oyna (Brauzer)", "url": live_url}
+                ]
+            ]
+        }
+        voice_text = "Assalomu alaykum Behruzbek! Go'shakni ko'targaningizni eshitdim. Men siz bilan jonli gaplashishga tayyorman!"
+        v_file = await generate_voice_message(voice_text, prepare_script=False)
+        if v_file:
+            await send_telegram_voice(v_file, caption="🎙 <b>Alfred:</b> <i>Go'shak ko'tarildi! Jonli suhbatga marhamat.</i>", chat_id=TELEGRAM_CHAT_ID)
+
+        await send_telegram_message(
+            "📞 <b>Go'shak ko'tarildi!</b>\n\n"
+            "Alfred siz bilan gaplashishga tayyor. To'g'ridan-to'g'ri ovozda suhbatlashish uchun quyidagi tugmani bosing:",
+            reply_markup=reply_markup,
+            chat_id=TELEGRAM_CHAT_ID
+        )
+    except Exception as e_card:
+        logger.warning(f"send_call_answered_live_card xatosi: {e_card}")
+
 async def make_telegram_call_detailed(reason_text: str = "", force: bool = False) -> tuple[bool, str]:
     """
     2-chi Telegram akkauntdan (caller_bot: +998930037685) asosiy profilga (+998999875186) haqiqiy Telegram audio qo'ng'iroq qilish.
@@ -953,6 +985,26 @@ async def start_userbot():
                     logger.info(f"✅ 2-Akkaunt (Caller Bot) faol: {me_c.first_name} (@{me_c.username})")
                     # 2 ta akkauntni o'zaro kontaktga qo'shish va Unblock qilish (Auto-Unblock & Contact Sync)
                     await ensure_caller_userbot_synced(c, c_caller)
+
+                    # QO'NG'IROQDA "exchanging encryption keys..." DA QOTISHNI TUZATISH
+                    # Yashil tugma bosilib go'shak ko'tarilganda darhol DiscardCallRequest qilib, chatga jonli WebApp tugmasini chiqarish
+                    @c_caller.on(events.Raw(types.UpdatePhoneCall))
+                    async def on_caller_phone_call_update(ev):
+                        try:
+                            p_call = getattr(ev, "phone_call", None)
+                            if isinstance(p_call, types.PhoneCallAccepted):
+                                logger.info(f"🟢 Foydalanuvchi go'shakni ko'tardi (PhoneCallAccepted, id={p_call.id})!")
+                                from telethon.tl.types import InputPhoneCall, PhoneCallDiscardReasonHungUp
+                                await c_caller(functions.phone.DiscardCallRequest(
+                                    peer=InputPhoneCall(id=p_call.id, access_hash=p_call.access_hash),
+                                    duration=1,
+                                    reason=PhoneCallDiscardReasonHungUp(),
+                                    connection_id=0
+                                ))
+                                logger.info("✅ Qo'ng'iroq go'shak ko'tarilishi bilan toza yopildi.")
+                                asyncio.create_task(send_call_answered_live_card())
+                        except Exception as e_ev:
+                            logger.debug(f"on_caller_phone_call_update xatosi: {e_ev}")
             except Exception as e_c:
                 logger.warning(f"2-Akkaunt (Caller) ulashda ogohlantirish: {e_c}")
 
