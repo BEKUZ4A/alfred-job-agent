@@ -570,11 +570,11 @@ async def run_gemini_react_agent(
             )
         else:
             from userbot import make_telegram_call_detailed
-            call_ok, c_info = await make_telegram_call_detailed("Behruzbek, so'rovingiz bo'yicha qo'ng'iroq qilyapman!")
+            call_ok, c_info = await make_telegram_call_detailed("Behruzbek, so'rovingiz bo'yicha qo'ng'iroq qilyapman!", force=True)
             if call_ok:
                 return (
                     f"📲 <b>2-chi akkauntdan ({c_info}) sizning Telegramingizga audio qo'ng'iroq yuborildi!</b>\n"
-                    "Qo'ng'iroq 35 soniya davomida jiringlab turadi."
+                    "Qo'ng'iroq 15 soniya davomida jiringlab turadi."
                 )
             else:
                 return f"❌ <b>Qo'ng'iroq qilishda xatolik yuz berdi:</b>\n<code>{c_info}</code>"

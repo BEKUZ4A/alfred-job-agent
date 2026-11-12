@@ -4,6 +4,7 @@ import os
 import re
 import random
 import hashlib
+import time
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, Any, List
 
@@ -34,7 +35,9 @@ from database import (
     update_hr_reminded,
     update_hr_pending_reply,
     get_hr_pending_reply,
-    delete_tracked_hr
+    delete_tracked_hr,
+    is_forbidden_hr_username,
+    update_hr_no_show_done
 )
 
 logger = logging.getLogger("Alfred.Userbot")
@@ -42,6 +45,29 @@ logger = logging.getLogger("Alfred.Userbot")
 client: Optional[TelegramClient] = None
 caller_client: Optional[TelegramClient] = None
 is_running = False
+
+# Global Call Cooldown va Anti-Loop himoyasi (kamida 180s / 3 daqiqa kutiladi)
+_last_call_timestamp: float = 0.0
+CALL_COOLDOWN_SECONDS: int = 180
+
+def clean_raw_hr_message(text: str) -> str:
+    """HR xabaridan bot shablonlarini tozalash va faqat asl qisqa xabarni olish (shablon ichiga shablon tushmasligi uchun)"""
+    if not text:
+        return ""
+    t = str(text).strip()
+    for marker in ["HRning eng oxirgi xabari:", "Oxirgi kelishuv:", "xabar yozdi:"]:
+        if marker in t:
+            parts = t.split(marker, 1)
+            if len(parts) > 1 and parts[1].strip():
+                t = parts[1].strip()
+                for stop_marker in ["🤖", "📝", "⏰", "💡", "👤", "🕒"]:
+                    if stop_marker in t:
+                        t = t.split(stop_marker)[0].strip()
+                break
+    t = t.strip('"\n\r ')
+    lines = [line.strip() for line in t.splitlines() if line.strip() and not any(line.strip().startswith(em) for em in ["🤖", "📝", "⏰", "💡", "👤", "🕒"])]
+    cleaned = " ".join(lines)
+    return cleaned[:1000].strip() or str(text)[:1000].strip()
 
 hr_lock = asyncio.Lock()
 handled_incoming_cache = set()
@@ -107,15 +133,22 @@ def format_message_time(msg_date) -> str:
 
 # ----------------- TELEGRAM AUDIO QO'NG'IROQ VA DRAFT -----------------
 
-async def make_telegram_call_detailed(reason_text: str = "") -> tuple[bool, str]:
+async def make_telegram_call_detailed(reason_text: str = "", force: bool = False) -> tuple[bool, str]:
     """
     2-chi Telegram akkauntdan (caller_bot) asosiy profilga haqiqiy Telegram audio qo'ng'iroq qilish.
-    - functions.messages.GetDhConfigRequest orqali to'g'ri g_a_hash generatsiya qiladi.
-    - PhoneCallProtocol(min_layer=65, max_layer=92, udp_p2p=True, udp_reflector=True, library_versions=['2.4.4'])
-    - Telefoningizda 35 soniya to'xtovsiz jiringlaydi.
+    - Global 3 daqiqalik Cooldown: oxirgi qo'ng'iroqdan keyin kamida 180 soniya o'tishi shart (cheksiz loop oldini olish uchun).
+    - PhoneCallProtocol(min_layer=65, max_layer=92, udp_p2p=True, udp_reflector=True, library_versions=["2.4.4"])
+    - Telefoningizda 15 soniya davomida jiringlaydi (gudok beradi) va avtomatik uziladi.
     - Bir vaqtning o'zida botdan ElevenLabs ovozida reason_text ni ovozli xabar qilib yuboradi.
     - Qaytaradi: (success: bool, info: str - caller_tag yoki aniq Exception xatosi)
     """
+    global _last_call_timestamp
+    now_ts = time.time()
+    if not force and (now_ts - _last_call_timestamp) < CALL_COOLDOWN_SECONDS:
+        rem = int(CALL_COOLDOWN_SECONDS - (now_ts - _last_call_timestamp))
+        logger.info(f"⏳ Qo'ng'iroq cooldown faol ({rem}s qoldi). Cheksiz loop oldini olish uchun o'tkazib yuborildi.")
+        return False, f"Qo'ng'iroqlar cooldown: kamida 3 daqiqa kutiladi ({rem}s qoldi)."
+
     c_caller = get_caller_client()
     c_user = get_userbot_client()
 
@@ -146,13 +179,14 @@ async def make_telegram_call_detailed(reason_text: str = "") -> tuple[bool, str]
         g_a = os.urandom(256)
         g_a_hash = hashlib.sha256(g_a).digest()
 
+        _last_call_timestamp = time.time()
         ent = await c_caller.get_input_entity(target_user)
         protocol = PhoneCallProtocol(
             min_layer=65, 
-            max_layer=93, 
+            max_layer=92, 
             udp_p2p=True, 
-            udp_reflector=True,
-            library_versions=['4.0.0', '3.0.0', '2.7.7', '2.4.4', '1.0.0']
+            udp_reflector=True, 
+            library_versions=["2.4.4"]
         )
         rand_id = random.randint(1, 2**30)
 
@@ -162,18 +196,18 @@ async def make_telegram_call_detailed(reason_text: str = "") -> tuple[bool, str]
             g_a_hash=g_a_hash,
             protocol=protocol
         ))
-        logger.info(f"📞 2-akkauntdan ({caller_tag}) haqiqiy Telegram Audio qo'ng'irog'i yo'llandi (35s ring)!")
+        logger.info(f"📞 2-akkauntdan ({caller_tag}) haqiqiy Telegram Audio qo'ng'irog'i yo'llandi (15s ring)!")
 
-        # 35 soniya to'xtovsiz jiringlatib, so'ng discard qilish
+        # 15 soniya to'xtovsiz jiringlatib (gudok berib), so'ng discard qilish
         async def _auto_discard():
-            await asyncio.sleep(35)
+            await asyncio.sleep(15)
             try:
                 p_call = getattr(call_req, "phone_call", None)
                 if p_call:
                     from telethon.tl.types import InputPhoneCall
                     await c_caller(DiscardCallRequest(
                         peer=InputPhoneCall(id=p_call.id, access_hash=p_call.access_hash),
-                        duration=35,
+                        duration=15,
                         reason=PhoneCallDiscardReasonBusy(),
                         connection_id=0
                     ))
@@ -198,9 +232,9 @@ async def make_telegram_call_detailed(reason_text: str = "") -> tuple[bool, str]
         logger.error(f"2-akkauntdan qo'ng'iroq qilishda Telethon xatoligi: {e_call}")
         return False, f"Telethon xatosi: {e_call}"
 
-async def make_telegram_call(reason_text: str = "") -> bool:
+async def make_telegram_call(reason_text: str = "", force: bool = False) -> bool:
     """Mavjud chaqiruvlar uchun boolean qaytaruvchi wrapper"""
-    success, _ = await make_telegram_call_detailed(reason_text)
+    success, _ = await make_telegram_call_detailed(reason_text, force=force)
     return success
 
 make_telegram_audio_call = make_telegram_call
@@ -398,6 +432,7 @@ async def handle_hr_outgoing_message(
     if chat_history is None:
         chat_history = await get_hr_chat_history(hr_username, limit=15)
 
+    message_text = clean_raw_hr_message(message_text)
     analysis = await analyze_user_hr_dialogue(chat_history, hr_username, company)
     has_agreed = analysis.get("has_agreed_time", False)
     exact_time_display = analysis.get("exact_time_display", "")
@@ -458,6 +493,7 @@ async def handle_hr_incoming_message(
     if chat_history is None:
         chat_history = await get_hr_chat_history(hr_username, limit=15)
 
+    message_text = clean_raw_hr_message(message_text)
     analysis = await analyze_hr_message(message_text, hr_username, company, chat_history=chat_history)
     has_exact_time = analysis.get("has_exact_time", False)
     exact_time_display = analysis.get("exact_time_display", "")
@@ -675,8 +711,14 @@ async def continuous_reminder_loop():
                     )
 
                 # b) No-Show tekshiruvi: suhbat vaqtidan 10 daqiqa o'tdi, lekin HR dan xabar kelmadi
-                if diff_sec < -600 and status not in ["no_show_handled", "completed", "cancelled"]:
-                    update_hr_status(hr_u, "no_show_handled")
+                no_show_done = bool(hr.get("no_show_notified"))
+                if diff_sec < -600 and not no_show_done and status not in ["no_show_handled", "completed", "cancelled"]:
+                    update_hr_no_show_done(hr_u)
+                    try:
+                        from backup_manager import schedule_db_backup
+                        schedule_db_backup()
+                    except Exception:
+                        pass
                     time_disp = int_dt.strftime("%H:%M")
                     followup_msg = f"Assalomu alaykum! Soat {time_disp} ga belgilangan suhbatimiz bo'yicha aloqadaman. Hozir sizga qulaymi yoki boshqa vaqtga ko'chiramizmi?"
                     await save_hr_draft_message(hr_u, followup_msg)
@@ -770,13 +812,17 @@ async def hr_monitor_loop():
                         msgs = await c.get_messages(hr_username, limit=1)
                         if msgs:
                             msg = msgs[0]
+                            sender = await msg.get_sender()
+                            if sender and (getattr(sender, "bot", False) or getattr(sender, "is_self", False)):
+                                delete_tracked_hr(hr_username)
+                                continue
                             if msg.id > last_seen_id:
                                 async with hr_lock:
                                     hr_fresh = get_tracked_hr(hr_username)
                                     fresh_last_seen = (hr_fresh.get("last_seen_msg_id") if hr_fresh else 0) or 0
                                     if msg.id <= fresh_last_seen:
                                         continue
-                                    update_hr_last_msg(hr_username, msg.id, msg.text or "", status="replied")
+                                    update_hr_last_msg(hr_username, msg.id, clean_raw_hr_message(msg.text or ""), status="replied")
 
                                 # Ovoz yoki video_note bo'lsa transkripsiya
                                 msg_text = msg.text or ""
@@ -791,10 +837,11 @@ async def hr_monitor_loop():
                                     except Exception:
                                         pass
 
+                                clean_text = clean_raw_hr_message(msg_text) or "(Xabar matni yo'q)"
                                 if not msg.out:
-                                    await handle_hr_incoming_message(hr_username, company, msg_text or "(Xabar matni yo'q)", msg.date)
+                                    await handle_hr_incoming_message(hr_username, company, clean_text, msg.date)
                                 else:
-                                    await handle_hr_outgoing_message(hr_username, company, msg_text, msg.date)
+                                    await handle_hr_outgoing_message(hr_username, company, clean_text, msg.date)
                     except Exception as e_hr:
                         logger.debug(f"HR @{hr_username} get_messages ogohlantirish: {e_hr}")
         except asyncio.CancelledError:
@@ -860,7 +907,21 @@ async def start_userbot():
         async def private_message_handler(event):
             try:
                 chat = await event.get_chat()
-                username = (getattr(chat, "username", "") or "").lower().strip().lstrip("@")
+                if not chat:
+                    return
+                # 1. BOT, O'ZIMIZ (ME) VA 2-CHI AKKAUNT (CALLER_BOT) NI QAT'IY E'TIBORSIZ QOLDIRISH
+                if getattr(chat, "bot", False) or getattr(chat, "is_self", False):
+                    return
+                chat_u = (getattr(chat, "username", "") or "").lower().strip().lstrip("@")
+                from database import is_forbidden_hr_username
+                if chat_u and is_forbidden_hr_username(chat_u):
+                    return
+                c_id = getattr(chat, "id", 0)
+                from config import TELEGRAM_CHAT_ID
+                if c_id and str(c_id) in [str(TELEGRAM_CHAT_ID), "5064983998", "8696382016"]:
+                    return
+
+                username = chat_u
                 phone = (getattr(chat, "phone", "") or "").strip()
 
                 # Ovozli yoki dumaloq video xabar bo'lsa transkripsiya
@@ -878,11 +939,17 @@ async def start_userbot():
 
                 # Auto-HR tekshiruvi (agar hali ro'yxatda bo'lmasa)
                 sender = await event.get_sender()
+                if not sender:
+                    return
                 if getattr(sender, "bot", False) or getattr(sender, "is_self", False):
                     return
-                from database import is_forbidden_hr_username
-                if username and is_forbidden_hr_username(username):
+                s_id = getattr(sender, "id", 0)
+                if s_id and str(s_id) in [str(TELEGRAM_CHAT_ID), "5064983998", "8696382016"]:
                     return
+                raw_u = (getattr(sender, "username", "") or "").lower().strip().lstrip("@")
+                if raw_u and is_forbidden_hr_username(raw_u):
+                    return
+                msg_text = clean_raw_hr_message(msg_text)
                 if not event.out and sender:
                     auto_tracked = await check_and_auto_track_hr(sender, msg_text)
                     if auto_tracked:

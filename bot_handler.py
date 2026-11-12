@@ -919,12 +919,12 @@ async def process_telegram_update(update: Dict[str, Any], trigger_scan_callback=
             return
         else:
             # Vaqt aytilmagan bo'lsa -> DARHOL 2-AKKAUNT AUDIO QO'NG'IROG'I (1 soniyada)
-            call_success, call_info = await make_telegram_call_detailed("Behruzbek, so'rovingiz bo'yicha qo'ng'iroq qilyapman!")
+            call_success, call_info = await make_telegram_call_detailed("Behruzbek, so'rovingiz bo'yicha qo'ng'iroq qilyapman!", force=True)
             if call_success:
                 caller_tag = call_info or "2-chi akkaunt"
                 await send_telegram_message(
                     f"📲 <b>2-chi akkauntdan ({caller_tag}) sizning Telegramingizga audio qo'ng'iroq yuborildi!</b>\n"
-                    "Qo'ng'iroq 35 soniya davomida jiringlab turadi.",
+                    "Qo'ng'iroq 15 soniya davomida jiringlab turadi.",
                     chat_id=chat_id
                 )
             else:

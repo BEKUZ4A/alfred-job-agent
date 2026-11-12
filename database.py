@@ -83,6 +83,9 @@ def init_db():
             last_message TEXT DEFAULT '',
             last_seen_msg_id BIGINT DEFAULT 0,
             pending_reply TEXT DEFAULT '',
+            interview_time TEXT DEFAULT '',
+            reminded_2min INTEGER DEFAULT 0,
+            no_show_notified INTEGER DEFAULT 0,
             last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
         CREATE TABLE IF NOT EXISTS applied_jobs (
@@ -98,6 +101,13 @@ def init_db():
         CREATE TABLE IF NOT EXISTS managed_channels (
             channel_id TEXT PRIMARY KEY,
             added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE TABLE IF NOT EXISTS custom_call_timers (
+            id SERIAL PRIMARY KEY,
+            target_time TEXT,
+            reason TEXT DEFAULT '',
+            is_done INTEGER DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
         CREATE TABLE IF NOT EXISTS managed_keywords (
             keyword TEXT PRIMARY KEY,
@@ -190,7 +200,8 @@ def init_db():
             ("last_seen_msg_id", "INTEGER DEFAULT 0"),
             ("pending_reply", "TEXT DEFAULT ''"),
             ("interview_time", "TEXT DEFAULT ''"),
-            ("reminded_2min", "INTEGER DEFAULT 0")
+            ("reminded_2min", "INTEGER DEFAULT 0"),
+            ("no_show_notified", "INTEGER DEFAULT 0")
         ]:
             try:
                 cursor.execute(f"ALTER TABLE tracked_hrs ADD COLUMN {col} {col_type}")
@@ -205,11 +216,11 @@ def init_db():
             except sqlite3.OperationalError:
                 pass
 
-        # Botlar va o'zimizning botimizni HR bazasidan 100% tozalash (Infinite loop himoyasi)
-        try:
-            cursor.execute("DELETE FROM tracked_hrs WHERE LOWER(username) LIKE '%bot' OR LOWER(username) IN ('me', 'ai_agents_24', 'bekuz4a_bot')")
-        except Exception:
-            pass
+    # Botlar va o'zimizning botimizni HR bazasidan 100% tozalash (Infinite loop himoyasi) - SQLite & PostgreSQL
+    try:
+        cursor.execute("DELETE FROM tracked_hrs WHERE LOWER(username) LIKE '%bot' OR LOWER(username) IN ('me', 'ai_agents_24', 'bekuz4a_bot', 'caller_bot')")
+    except Exception:
+        pass
 
     conn.commit()
     conn.close()
@@ -549,12 +560,12 @@ except Exception:
     pass
 
 
-def update_hr_interview_time(username: str, interview_iso: str, reminded_2min: bool = False):
+def update_hr_interview_time(username: str, interview_iso: str, reminded_2min: bool = False, no_show_notified: bool = False):
     """HR bilan kelishilgan suhbat vaqtini bazada saqlash"""
     username = username.strip().lstrip("@").lower()
     execute_query(
-        "UPDATE tracked_hrs SET interview_time = ?, reminded_2min = ?, last_updated = CURRENT_TIMESTAMP WHERE LOWER(username) = ?",
-        (interview_iso, 1 if reminded_2min else 0, username),
+        "UPDATE tracked_hrs SET interview_time = ?, reminded_2min = ?, no_show_notified = ?, last_updated = CURRENT_TIMESTAMP WHERE LOWER(username) = ?",
+        (interview_iso, 1 if reminded_2min else 0, 1 if no_show_notified else 0, username),
         commit=True
     )
 
@@ -564,6 +575,15 @@ def update_hr_reminded(username: str, reminded_2min: bool = True):
     execute_query(
         "UPDATE tracked_hrs SET reminded_2min = ?, last_updated = CURRENT_TIMESTAMP WHERE LOWER(username) = ?",
         (1 if reminded_2min else 0, username),
+        commit=True
+    )
+
+def update_hr_no_show_done(username: str):
+    """No-Show 1 marta ishladi: no_show_notified=True va interview_time ni tozalash (taymer to'xtaydi)"""
+    username = username.strip().lstrip("@").lower()
+    execute_query(
+        "UPDATE tracked_hrs SET no_show_notified = 1, interview_time = '', status = 'no_show_handled', last_updated = CURRENT_TIMESTAMP WHERE LOWER(username) = ?",
+        (username,),
         commit=True
     )
 
@@ -579,6 +599,7 @@ def get_backup_data() -> Dict[str, Any]:
                 "last_seen_msg_id": h.get("last_seen_msg_id") or 0,
                 "interview_time": h.get("interview_time") or "",
                 "reminded_2min": bool(h.get("reminded_2min")),
+                "no_show_notified": bool(h.get("no_show_notified")),
                 "status": h.get("status") or "waiting"
             }
     # Seen job hashes
@@ -602,9 +623,9 @@ def restore_from_backup_data(data: Dict[str, Any]) -> bool:
     if not isinstance(data, dict):
         return False
     try:
-        # 1. Restore tracked HRs
+        # 1. Restore tracked HRs (Anti-Bot & Anti-Self majburiy tozalash bilan)
         tracked_hrs = data.get("tracked_hrs", {})
-        for u, info in tracked_hrs.items():
+        for u, info in list(tracked_hrs.items()):
             u_clean = u.strip().lstrip("@").lower()
             if is_forbidden_hr_username(u_clean):
                 continue
@@ -613,17 +634,18 @@ def restore_from_backup_data(data: Dict[str, Any]) -> bool:
             last_seen_id = info.get("last_seen_msg_id", 0)
             interview_time = info.get("interview_time", "")
             reminded = 1 if info.get("reminded_2min") else 0
+            no_show = 1 if info.get("no_show_notified") else 0
             status = info.get("status", "waiting")
             if not existing:
                 execute_query(
-                    "INSERT INTO tracked_hrs (username, company, last_seen_msg_id, interview_time, reminded_2min, status) VALUES (?, ?, ?, ?, ?, ?)",
-                    (u_clean, company, last_seen_id, interview_time, reminded, status),
+                    "INSERT INTO tracked_hrs (username, company, last_seen_msg_id, interview_time, reminded_2min, no_show_notified, status) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (u_clean, company, last_seen_id, interview_time, reminded, no_show, status),
                     commit=True
                 )
             else:
                 execute_query(
-                    "UPDATE tracked_hrs SET company = ?, last_seen_msg_id = MAX(last_seen_msg_id, ?), interview_time = ?, reminded_2min = ?, status = ? WHERE LOWER(username) = ?",
-                    (company or existing.get("company", ""), last_seen_id, interview_time or existing.get("interview_time", ""), reminded, status or existing.get("status", "waiting"), u_clean),
+                    "UPDATE tracked_hrs SET company = ?, last_seen_msg_id = MAX(last_seen_msg_id, ?), interview_time = ?, reminded_2min = ?, no_show_notified = ?, status = ? WHERE LOWER(username) = ?",
+                    (company or existing.get("company", ""), last_seen_id, interview_time or existing.get("interview_time", ""), reminded, no_show, status or existing.get("status", "waiting"), u_clean),
                     commit=True
                 )
 

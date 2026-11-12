@@ -86,6 +86,15 @@ async def restore_db_backup_from_telegram() -> bool:
         _, text = found
         clean_json = text.replace(TAG_DB_BACKUP, "").strip()
         data = json.loads(clean_json)
+        
+        # Anti-Self & Anti-Bot: bekuz4a_bot va har qanday botlarni qat'iy tozalash
+        from database import is_forbidden_hr_username
+        tracked = data.get("tracked_hrs", {})
+        cleaned_tracked = {k: v for k, v in tracked.items() if not is_forbidden_hr_username(k)}
+        if len(cleaned_tracked) != len(tracked):
+            data["tracked_hrs"] = cleaned_tracked
+            asyncio.create_task(save_or_update_saved_message(TAG_DB_BACKUP, json.dumps(data, ensure_ascii=False, indent=2)))
+
         success = restore_from_backup_data(data)
         if success:
             logger.info("✅ #ALFRED_DB_BACKUP dan ma'lumotlar bazasi 100% tiklandi!")

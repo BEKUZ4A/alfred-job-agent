@@ -54,7 +54,7 @@ async def make_call(text: str = "Sizga mos yangi vakansiya chiqdi", force: bool 
         return False
     try:
         from userbot import make_telegram_call
-        return await make_telegram_call(text)
+        return await make_telegram_call(text, force=force)
     except Exception as e:
         logger.error(f"Telegram audio qo'ng'iroq xatosi: {e}")
         return False
