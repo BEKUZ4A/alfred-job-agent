@@ -14,3 +14,7 @@ reportlab>=4.0.0
 google-api-python-client>=2.100.0
 google-auth>=2.20.0
 psycopg2-binary>=2.9.0
+static-ffmpeg>=3.0
+ntgcalls>=3.0.7
+py-tgcalls>=3.0.0
+

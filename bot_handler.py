@@ -952,23 +952,11 @@ async def process_telegram_update(update: Dict[str, Any], trigger_scan_callback=
             call_success, call_info = await make_telegram_call_detailed("Behruzbek, so'rovingiz bo'yicha qo'ng'iroq qilyapman!", force=True)
             if call_success:
                 caller_tag = call_info or "2-chi akkaunt"
-                live_url = "https://alfred-job-agent.onrender.com/live"
-                reply_markup = {
-                    "inline_keyboard": [
-                        [
-                            {"text": "📞 Alfred bilan Jonli Gaplashish", "web_app": {"url": live_url}}
-                        ],
-                        [
-                            {"text": "🌐 Jonli Oyna (Brauzer)", "url": live_url}
-                        ]
-                    ]
-                }
                 await send_telegram_message(
-                    f"📲 <b>2-chi akkauntdan ({caller_tag}) sizning Telegramingizga audio qo'ng'iroq yuborildi!</b>\n"
-                    "Qo'ng'iroq 20 soniya davomida jiringlab turadi.\n\n"
-                    "💡 <i>Go'shakni ko'tarsangiz yoki quyidagi tugmani bossangiz, Alfred bilan to'g'ridan-to'g'ri ovozda suhbatlashishingiz mumkin:</i>",
-                    chat_id=chat_id,
-                    reply_markup=reply_markup
+                    f"📲 <b>2-chi akkauntdan ({caller_tag}) sizning Telegramingizga haqiqiy audio qo'ng'iroq yuborildi!</b>\n"
+                    "Qo'ng'iroq 25 soniya davomida jiringlab turadi.\n\n"
+                    "🎙 <i>Go'shakni ko'taring — Alfred siz bilan jonli audio aloqada gaplashadi!</i>",
+                    chat_id=chat_id
                 )
             else:
                 await send_telegram_message(

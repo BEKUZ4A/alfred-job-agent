@@ -10,9 +10,21 @@ from typing import Optional, Dict, Any, List
 
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
-from telethon.tl.types import User, PhoneCallProtocol, PhoneCallDiscardReasonBusy
-from telethon.tl.functions.phone import RequestCallRequest, DiscardCallRequest
-from telethon.tl.functions.messages import SaveDraftRequest
+from telethon.tl.types import User, PhoneCallProtocol, PhoneCallDiscardReasonBusy, InputPhoneCall
+from telethon.tl.functions.phone import RequestCallRequest, DiscardCallRequest, ConfirmCallRequest
+from telethon.tl.functions.messages import SaveDraftRequest, GetDhConfigRequest
+
+try:
+    import static_ffmpeg
+    static_ffmpeg.add_paths()
+except Exception:
+    pass
+
+try:
+    from pytgcalls import PyTgCalls
+    from pytgcalls.types import MediaStream
+except Exception:
+    pass
 
 from config import (
     TELEGRAM_API_ID,
@@ -71,6 +83,22 @@ def clean_raw_hr_message(text: str) -> str:
 
 hr_lock = asyncio.Lock()
 handled_incoming_cache = set()
+active_call_dh: Dict[int, Dict[str, Any]] = {}
+pytgcalls_client: Optional[Any] = None
+
+def get_pytgcalls():
+    global pytgcalls_client
+    return pytgcalls_client
+
+TELEGRAM_CALL_PROTOCOL = PhoneCallProtocol(
+    min_layer=92, 
+    max_layer=92, 
+    udp_p2p=True, 
+    udp_reflector=True, 
+    library_versions=[
+        "8.0.0", "9.0.0", "12.0.0", "13.0.0", "4.0.0", "3.0.0", "2.7.7"
+    ]
+)
 
 def get_userbot_client() -> Optional[TelegramClient]:
     global client
@@ -191,46 +219,15 @@ async def ensure_caller_userbot_synced(c_user: TelegramClient, c_caller: Telegra
     except Exception as e_sync:
         logger.warning(f"ensure_caller_userbot_synced ogohlantirish: {e_sync}")
 
-async def send_call_answered_live_card():
-    """Go'shak ko'tarilganda darhol chatga ElevenLabs ovozli xabarini va Jonli WebApp tugmasini chiqarish"""
-    try:
-        from notifier import send_telegram_message, send_telegram_voice
-        from voice import generate_voice_message
-        from config import TELEGRAM_CHAT_ID
-
-        live_url = "https://alfred-job-agent.onrender.com/live"
-        reply_markup = {
-            "inline_keyboard": [
-                [
-                    {"text": "📞 Alfred bilan Jonli Ovozda Gaplashish", "web_app": {"url": live_url}}
-                ],
-                [
-                    {"text": "🌐 Jonli Oyna (Brauzer)", "url": live_url}
-                ]
-            ]
-        }
-        voice_text = "Assalomu alaykum Behruzbek! Go'shakni ko'targaningizni eshitdim. Men siz bilan jonli gaplashishga tayyorman!"
-        v_file = await generate_voice_message(voice_text, prepare_script=False)
-        if v_file:
-            await send_telegram_voice(v_file, caption="🎙 <b>Alfred:</b> <i>Go'shak ko'tarildi! Jonli suhbatga marhamat.</i>", chat_id=TELEGRAM_CHAT_ID)
-
-        await send_telegram_message(
-            "📞 <b>Go'shak ko'tarildi!</b>\n\n"
-            "Alfred siz bilan gaplashishga tayyor. To'g'ridan-to'g'ri ovozda suhbatlashish uchun quyidagi tugmani bosing:",
-            reply_markup=reply_markup,
-            chat_id=TELEGRAM_CHAT_ID
-        )
-    except Exception as e_card:
-        logger.warning(f"send_call_answered_live_card xatosi: {e_card}")
-
 async def make_telegram_call_detailed(reason_text: str = "", force: bool = False) -> tuple[bool, str]:
     """
     2-chi Telegram akkauntdan (caller_bot: +998930037685) asosiy profilga (+998999875186) haqiqiy Telegram audio qo'ng'iroq qilish.
     - Global 3 daqiqalik Cooldown: oxirgi qo'ng'iroqdan keyin kamida 180 soniya o'tishi shart (cheksiz loop oldini olish uchun).
     - ensure_caller_userbot_synced: avtomatik unblock va contact import (User is blocked xatosini yo'qotadi).
-    - PhoneCallProtocol(min_layer=65, max_layer=92, udp_p2p=True, udp_reflector=True, library_versions=["2.4.4"])
-    - Telefoningizda 20 soniya davomida jiringlaydi (gudok beradi) va avtomatik uziladi.
-    - Bir vaqtning o'zida botdan ElevenLabs ovozida reason_text ni ovozli xabar qilib yuboradi.
+    - To'liq Diffie-Hellman kalit generatsiyasi (p, g, a, g_a_bytes, g_a_hash).
+    - PhoneCallProtocol(min_layer=92, max_layer=92, udp_p2p=True, udp_reflector=True, library_versions=["8.0.0", "9.0.0", "12.0.0", "13.0.0", "4.0.0", "3.0.0", "2.7.7"])
+    - Go'shak ko'tarilganda (PhoneCallAccepted) ConfirmCallRequest orqali 'exchanging encryption keys...' darhol yechiladi.
+    - PyTgCalls orqali jonli ElevenLabs audio to'g'ridan-to'g'ri qo'ng'iroq ichiga stream qilinadi.
     - Qaytaradi: (success: bool, info: str - caller_tag yoki aniq Exception xatosi)
     """
     global _last_call_timestamp
@@ -264,6 +261,7 @@ async def make_telegram_call_detailed(reason_text: str = "", force: bool = False
         caller_tag = f"@{me_caller.username}" if getattr(me_caller, "username", None) else f"ID: {me_caller.id}"
 
         # 2. Nishon sifatida faqat ASOSIY PROFIL (+998999875186 / me_primary)
+        user_target = 5064983998
         try:
             ent = await c_caller.get_input_entity("+998999875186")
         except Exception:
@@ -271,65 +269,103 @@ async def make_telegram_call_detailed(reason_text: str = "", force: bool = False
             user_target = me_primary.id if me_primary else 5064983998
             ent = await c_caller.get_input_entity(user_target)
 
-        # DH Config va Hash generatsiyasi
+        # 3. ElevenLabs audio generatsiyasi
+        greeting_text = "Assalomu alaykum Behruzbek! Go'shakni ko'targaningizni eshitdim. Men siz bilan jonli gaplashishga tayyorman!"
+        audio_text = f"{greeting_text} {reason_text}".strip()
+        v_file = None
         try:
-            await c_caller(functions.messages.GetDhConfigRequest(version=0, random_length=256))
-        except Exception:
-            pass
-        g_a = os.urandom(256)
-        g_a_hash = hashlib.sha256(g_a).digest()
+            from voice import generate_voice_message
+            v_file = await generate_voice_message(audio_text, prepare_script=False)
+        except Exception as e_v:
+            logger.warning(f"Ovozli audio generatsiyada ogohlantirish: {e_v}")
+
+        # 4. Diffie-Hellman parametrlarini hisoblash
+        dh_config = None
+        try:
+            dh_config = await c_caller(GetDhConfigRequest(version=0, random_length=256))
+        except Exception as e_dh:
+            logger.debug(f"GetDhConfigRequest xatosi: {e_dh}")
+
+        if dh_config and getattr(dh_config, "p", None):
+            p = int.from_bytes(dh_config.p, "big")
+            g = dh_config.g
+        else:
+            p = int(
+                "FFFFFFFFFFFFFFFFC90FDAA22168C234C4C6628B80DC1CD1"
+                "29024E088A67CC74020BBEA63B139B22514A08798E3404DD"
+                "EF9519B3CD3A431B302B0A6DF25F14374FE1356D6D51C245"
+                "E485B576625E7EC6F44C42E9A637ED6B0BFF5CB6F406B7ED"
+                "EE386BFB5A899FA5AE9F24117C4B1FE649286651ECE45B3D"
+                "C2007CB8A163BF0598DA48361C55D39A69163FA8FD24CF5F"
+                "83655D23DCA3AD961C62F356208552BB9ED529077096966D"
+                "670C354E4ABC9804F1746C08CA18217C32905E462E36CE3B"
+                "E39E772C180E86039B2783A2EC07A28FB5C55DF06F4C52C9"
+                "DE2BCBF6955817183995497CEA956AE515D2261898FA0510"
+                "15728E5A8AACAA68FFFFFFFFFFFFFFFF", 16
+            )
+            g = 3
+
+        a = int.from_bytes(os.urandom(256), "big")
+        g_a = pow(g, a, p)
+        g_a_bytes = g_a.to_bytes(256, "big")
+        g_a_hash = hashlib.sha256(g_a_bytes).digest()
 
         _last_call_timestamp = time.time()
-        protocol = PhoneCallProtocol(
-            min_layer=65, 
-            max_layer=92, 
-            udp_p2p=True, 
-            udp_reflector=True, 
-            library_versions=[
-                "2.4.4", "2.7.7", "3.0.0", "4.0.0", "4.0.1",
-                "5.0.0", "6.0.0", "7.0.0", "8.0.0", "9.0.0",
-                "10.0.0", "11.0.0", "12.0.0", "13.0.0"
-            ]
-        )
         rand_id = random.randint(1, 2**30)
 
         call_req = await c_caller(RequestCallRequest(
             user_id=ent,
             random_id=rand_id,
             g_a_hash=g_a_hash,
-            protocol=protocol
+            protocol=TELEGRAM_CALL_PROTOCOL,
+            video=False
         ))
-        logger.info(f"📞 2-akkauntdan ({caller_tag}) haqiqiy Telegram Audio qo'ng'irog'i yo'llandi (20s ring)!")
+        p_call = getattr(call_req, "phone_call", None)
+        if p_call:
+            active_call_dh[p_call.id] = {
+                "a": a,
+                "p": p,
+                "g": g,
+                "g_a_bytes": g_a_bytes,
+                "protocol": TELEGRAM_CALL_PROTOCOL,
+                "access_hash": p_call.access_hash,
+                "target_id": user_target,
+                "audio_file": v_file,
+                "answered": False
+            }
+            logger.info(f"📞 2-akkauntdan ({caller_tag}) haqiqiy Telegram Audio qo'ng'irog'i yo'llandi (call_id={p_call.id})!")
 
-        # 20 soniya to'xtovsiz jiringlatib (gudok berib), so'ng discard qilish
+        # 25 soniya davomida javobsiz qolsa avtomatik uzish
         async def _auto_discard():
-            await asyncio.sleep(20)
+            await asyncio.sleep(25)
             try:
-                p_call = getattr(call_req, "phone_call", None)
-                if p_call:
-                    from telethon.tl.types import InputPhoneCall
-                    await c_caller(DiscardCallRequest(
-                        peer=InputPhoneCall(id=p_call.id, access_hash=p_call.access_hash),
-                        duration=20,
-                        reason=PhoneCallDiscardReasonBusy(),
-                        connection_id=0
-                    ))
+                if p_call and p_call.id in active_call_dh:
+                    if not active_call_dh[p_call.id].get("answered"):
+                        await c_caller(DiscardCallRequest(
+                            peer=InputPhoneCall(id=p_call.id, access_hash=p_call.access_hash),
+                            duration=25,
+                            reason=PhoneCallDiscardReasonBusy(),
+                            connection_id=0
+                        ))
+                        active_call_dh.pop(p_call.id, None)
+                        logger.info("⏳ Qo'ng'iroq 25s davomida javobsiz qoldi va yakunlandi.")
             except Exception:
                 pass
         asyncio.create_task(_auto_discard())
 
-        # Bir vaqtning o'zida botdan ElevenLabs ovozida reason_text ni jo'natish
-        if reason_text:
+        # Bir vaqtning o'zida botdan ElevenLabs ovozida reason_text ni ham chatga jo'natish
+        if v_file:
             try:
-                from voice import generate_voice_message
                 from notifier import send_telegram_voice
-                v_file = await generate_voice_message(reason_text, prepare_script=False)
-                if v_file:
-                    await send_telegram_voice(v_file, caption=f"🎙 <b>{reason_text}</b>")
-            except Exception as e_v:
-                logger.warning(f"Ovozli eslatma xatosi: {e_v}")
+                await send_telegram_voice(v_file, caption=f"🎙 <b>{reason_text or greeting_text}</b>")
+            except Exception as e_v_snd:
+                logger.debug(f"Ovozli eslatma xatosi: {e_v_snd}")
 
         return True, caller_tag
+
+    except Exception as e_call:
+        logger.error(f"2-akkauntdan qo'ng'iroq qilishda Telethon xatoligi: {e_call}")
+        return False, f"Telethon xatosi: {e_call}"
 
     except Exception as e_call:
         logger.error(f"2-akkauntdan qo'ng'iroq qilishda Telethon xatoligi: {e_call}")
@@ -560,8 +596,6 @@ async def handle_hr_outgoing_message(
                 schedule_db_backup()
             except Exception:
                 pass
-            # HR vaqt belgilaganda DARHOL 1 marta qo'ng'iroq qilib ogohlantirish
-            await make_telegram_call(f"Behruzbek, HR @{hr_username} suhbat vaqtini belgiladi: {exact_time_display}!")
 
         comp_disp = f"\n🏢 <b>Kompaniya:</b> {company}" if (company and company.lower() != "kompaniya") else ""
         await send_telegram_message(
@@ -649,8 +683,6 @@ async def handle_hr_incoming_message(
                 schedule_db_backup()
             except Exception:
                 pass
-            # HR vaqt belgilaganda DARHOL 1 marta qo'ng'iroq qilib ogohlantirish
-            await make_telegram_call(f"Behruzbek, HR @{hr_username} suhbat vaqtini belgiladi: {exact_time_display}!")
 
         inline_keyboard = []
         if meet_url:
@@ -695,8 +727,8 @@ async def handle_hr_incoming_message(
 async def schedule_2min_reminder(target_dt: datetime, hr_username: str, company: str = "", time_display: str = ""):
     """HR suhbat vaqtini bazada saqlash va 2 daqiqalik eslatmani rejalashtirish"""
     try:
-        from database import update_hr_interview_time, track_hr
-        track_hr(hr_username, company=company, source="direct_agreement")
+        from database import update_hr_interview_time, add_tracked_hr
+        add_tracked_hr(hr_username, company=company)
         update_hr_interview_time(hr_username, target_dt.isoformat(), reminded_2min=False)
         from backup_manager import schedule_db_backup
         schedule_db_backup()
@@ -986,25 +1018,56 @@ async def start_userbot():
                     # 2 ta akkauntni o'zaro kontaktga qo'shish va Unblock qilish (Auto-Unblock & Contact Sync)
                     await ensure_caller_userbot_synced(c, c_caller)
 
-                    # QO'NG'IROQDA "exchanging encryption keys..." DA QOTISHNI TUZATISH
-                    # Yashil tugma bosilib go'shak ko'tarilganda darhol DiscardCallRequest qilib, chatga jonli WebApp tugmasini chiqarish
+                    # PyTgCalls (WebRTC Voice Engine) ni 2-akkaunt uchun ishga tushirish
+                    try:
+                        global pytgcalls_client
+                        if pytgcalls_client is None:
+                            pytgcalls_client = PyTgCalls(c_caller)
+                            await pytgcalls_client.start()
+                            logger.info("✅ PyTgCalls (WebRTC Audio Engine) 2-akkaunt uchun muvaffaqiyatli ishga tushdi!")
+                    except Exception as e_ptg_start:
+                        logger.warning(f"PyTgCalls ishga tushirishda ogohlantirish: {e_ptg_start}")
+
+                    # MTProto Qo'ng'iroqlarda 'exchanging encryption keys...' ni ConfirmCallRequest bilan to'liq hal qilish
                     @c_caller.on(events.Raw(types.UpdatePhoneCall))
                     async def on_caller_phone_call_update(ev):
                         try:
                             p_call = getattr(ev, "phone_call", None)
                             if isinstance(p_call, types.PhoneCallAccepted):
-                                logger.info(f"🟢 Foydalanuvchi go'shakni ko'tardi (PhoneCallAccepted, id={p_call.id})!")
-                                from telethon.tl.types import InputPhoneCall, PhoneCallDiscardReasonHungUp
-                                await c_caller(functions.phone.DiscardCallRequest(
-                                    peer=InputPhoneCall(id=p_call.id, access_hash=p_call.access_hash),
-                                    duration=1,
-                                    reason=PhoneCallDiscardReasonHungUp(),
-                                    connection_id=0
-                                ))
-                                logger.info("✅ Qo'ng'iroq go'shak ko'tarilishi bilan toza yopildi.")
-                                asyncio.create_task(send_call_answered_live_card())
+                                call_id = p_call.id
+                                logger.info(f"🟢 Foydalanuvchi go'shakni ko'tardi (PhoneCallAccepted, id={call_id})! Diffie-Hellman kalit tasdiqlanmoqda...")
+                                dh_data = active_call_dh.get(call_id)
+                                if dh_data:
+                                    dh_data["answered"] = True
+                                    g_b = int.from_bytes(p_call.g_b, "big")
+                                    auth_key = pow(g_b, dh_data["a"], dh_data["p"]).to_bytes(256, "big")
+                                    key_fingerprint = int.from_bytes(hashlib.sha1(auth_key).digest()[-8:], "little", signed=True)
+                                    confirm_protocol = p_call.protocol or dh_data.get("protocol")
+
+                                    await c_caller(functions.phone.ConfirmCallRequest(
+                                        peer=types.InputPhoneCall(id=p_call.id, access_hash=p_call.access_hash),
+                                        g_a=dh_data["g_a_bytes"],
+                                        key_fingerprint=key_fingerprint,
+                                        protocol=confirm_protocol
+                                    ))
+                                    logger.info(f"🎉 QO'NG'IROQ TO'LIQ UL㚅NDI! 'exchanging encryption keys...' to'liq yechildi! (fingerprint={key_fingerprint})")
+
+                                    # PyTgCalls orqali jonli audio stream
+                                    audio_file = dh_data.get("audio_file")
+                                    target_uid = dh_data.get("target_id")
+                                    if pytgcalls_client and audio_file and target_uid:
+                                        try:
+                                            await pytgcalls_client.play(target_uid, audio_file)
+                                            logger.info("🎙 PyTgCalls orqali audio to'g'ridan-to'g'ri qo'ng'iroqqa stream qilindi!")
+                                        except Exception as e_ptg_stream:
+                                            logger.warning(f"PyTgCalls stream ogohlantirish: {e_ptg_stream}")
+                                else:
+                                    logger.warning(f"active_call_dh da call_id={call_id} topilmadi.")
+                            elif isinstance(p_call, types.PhoneCallDiscarded):
+                                logger.info(f"🔴 Qo'ng'iroq yakunlandi (PhoneCallDiscarded, id={p_call.id}).")
+                                active_call_dh.pop(p_call.id, None)
                         except Exception as e_ev:
-                            logger.debug(f"on_caller_phone_call_update xatosi: {e_ev}")
+                            logger.error(f"on_caller_phone_call_update xatosi: {e_ev}")
             except Exception as e_c:
                 logger.warning(f"2-Akkaunt (Caller) ulashda ogohlantirish: {e_c}")
 
