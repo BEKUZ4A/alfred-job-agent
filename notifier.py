@@ -145,47 +145,9 @@ async def send_telegram_message(text: str, reply_markup: Optional[Dict] = None, 
     return success
 
 async def send_telegram_voice(file_path: str, caption: str = "", chat_id: str = "") -> bool:
-    """Telegram bot orqali ovozli xabar (voice/audio) yuborish"""
-    target_chat_id = chat_id or TELEGRAM_CHAT_ID
-    if not TELEGRAM_BOT_TOKEN or not target_chat_id:
-        return False
-        
-    if not os.path.exists(file_path):
-        return False
-        
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendVoice"
-    
-    mime_type = "audio/ogg" if file_path.endswith(".ogg") else ("audio/wav" if file_path.endswith(".wav") else "audio/mpeg")
-
-    try:
-        clean_caption = markdown_to_telegram_html(caption)
-        async with httpx.AsyncClient(timeout=35) as client:
-            with open(file_path, "rb") as f:
-                files = {"voice": (os.path.basename(file_path), f, mime_type)}
-                data = {
-                    "chat_id": target_chat_id,
-                    "caption": clean_caption[:1024],
-                    "parse_mode": "HTML"
-                }
-                resp = await client.post(url, data=data, files=files)
-                if resp.status_code == 200:
-                    return True
-
-            # sendAudio orqali zaxira
-            audio_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendAudio"
-            with open(file_path, "rb") as f2:
-                a_files = {"audio": (os.path.basename(file_path), f2, mime_type)}
-                a_resp = await client.post(audio_url, data=data, files=a_files)
-                return a_resp.status_code == 200
-    except Exception as e:
-        logger.error(f"Telegram voice yuborishda xato: {e}")
-        return False
-    finally:
-        try:
-            if os.path.exists(file_path):
-                os.remove(file_path)
-        except Exception:
-            pass
+    """Chatga golos yuborish butunlay o'chirildi - barcha ovozlar faqat jonli telefon qo'ng'irog'i ichida yangraydi"""
+    logger.info("ℹ️ Chatga ovozli xabar (golos) yuborish o'chirildi (barcha ovoz faqat jonli telefon qo'ng'irog'ida yangraydi).")
+    return True
 
 async def send_telegram_document(file_path: str, caption: str = "", chat_id: str = "") -> bool:
     """Telegram bot orqali hujjat (PDF Rezyume) yuborish"""
@@ -344,19 +306,6 @@ async def notify_user_about_vacancies(matches: List[Dict[str, Any]]):
         except Exception:
             pass
 
-    # Eng mos 1 ta vakansiya uchun o'zbekcha ovozli xabar
-    try:
-        voice_file = await generate_voice_message(voice_text)
-        if voice_file:
-            caption = (
-                f"🎙 <b>Top-1 Eng Mos Vakansiya / Buyurtma Ovozli Xabari:</b>\n"
-                f"<b>{top_title}</b> ({top_score}% moslik)\n"
-                f"📅 E'lon qilingan: {top_posted_at}"
-            )
-            await send_telegram_voice(voice_file, caption=caption)
-    except Exception as e:
-        logger.error(f"Telegram ovozli xabar yuborishda xato: {e}")
-        
     # Vakansiyalarni tugmalari bilan yuborish
     for i, vac in enumerate(top_matches, start=1):
         try:
@@ -414,14 +363,4 @@ async def send_hr_alert_to_bot(hr_username: str, company: str, original_msg: str
 
     await send_telegram_message(text, reply_markup=reply_markup)
 
-    # ElevenLabs orqali qisqa ovozli xabar (maksimal 250 belgi)
-    try:
-        from voice import generate_voice_message
-        voice_text = f"Assalomu alaykum Behruzbek! Kuzatuvdagi HR {hr_username} sizga javob yozdi. {ai_summary}"
-        if len(voice_text) > 240:
-            voice_text = voice_text[:237] + "..."
-        voice_file = await generate_voice_message(voice_text, prepare_script=False)
-        if voice_file:
-            await send_telegram_voice(voice_file, caption=f"🎙 HR @{hr_username} xabari xulosasi")
-    except Exception as e:
-        logger.warning(f"HR ovozli xabarida xatolik: {e}")
+

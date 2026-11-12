@@ -280,7 +280,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Alfred - 24/7 AI IT Recruiter",
     description="Python/Django/FastAPI/AI bo'yicha vakansiyalarni 24/7 qidiruvchi shaxsiy agent",
-    version="2.6.0",
+    version="2.6.1",
     lifespan=lifespan
 )
 
@@ -289,7 +289,7 @@ async def root():
     return {
         "status": "online",
         "agent": "Alfred 24/7 AI IT Recruiter",
-        "version": "2.6.0 (Two-Way Live Voice Telegram Calls via PyTgCalls & Zero Chat Golos)",
+        "version": "2.6.1 (100% Zero-Golos, Patched Phone Resolution & Full-Duplex WebRTC Live Voice Calls)",
         "bot_listener": "active (Telegram Polling)",
         "gemini_status": get_last_error(),
         "endpoints": {

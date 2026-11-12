@@ -224,24 +224,15 @@ async def tool_3_schedule_interview_timer(
 
 async def tool_4_make_urgent_call_and_voice(hr_username: str, voice_text: str) -> str:
     """
-    2-akkauntdan foydalanuvchiga shoshilinch Telegram qo'ng'iroq va ElevenLabs ovozli xabar berish.
+    2-akkauntdan foydalanuvchiga shoshilinch Telegram qo'ng'iroq qilish (jonli audio suhbat).
     """
     clean_hr = hr_username.strip().lstrip("@").lower()
-    logger.info(f"Tool 4: urgent call and voice for @{clean_hr}")
+    logger.info(f"Tool 4: urgent audio call for @{clean_hr}")
 
-    # 1. 2-akkauntdan qo'ng'iroq
+    # 1. 2-akkauntdan jonli audio qo'ng'iroq (qo'ng'iroq ichida gapiradi)
     call_res = await make_telegram_audio_call(voice_text or f"HR @{clean_hr} bo'yicha shoshilinch xabar!")
 
-    # 2. ElevenLabs ovoz
-    if voice_text:
-        try:
-            v_file = await generate_voice_message(voice_text, prepare_script=False)
-            if v_file:
-                await send_telegram_voice(v_file, caption=f"🎙 Shoshilinch xabarnoma: @{clean_hr}")
-        except Exception as e:
-            logger.warning(f"Tool 4 voice xatosi: {e}")
-
-    return f"Qo'ng'iroq holati: {call_res}. Ovozli eslatma yuborildi."
+    return f"Qo'ng'iroq holati: {call_res}. Jonli audio qo'ng'iroq yuborildi."
 
 
 async def tool_5_generate_tailored_cv(company: str, role: str, job_text: str, lang: str = "uz") -> str:

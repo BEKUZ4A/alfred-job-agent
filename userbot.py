@@ -169,7 +169,7 @@ async def process_user_call_speech(chat_id: int):
             return
 
         # Gemini ReAct Agent orqali javob generatsiya qilish
-        from ai_analyzer import run_gemini_react_agent
+        from gemini_agent import run_gemini_react_agent
         voice_prompt = (
             f"Foydalanuvchi siz bilan jonli telefon qo'ng'irog'ida suhbatlashyapti. "
             f"Foydalanuvchi so'zlari: \"{user_text}\". "
@@ -263,6 +263,19 @@ async def ensure_pytgcalls_started(caller_client) -> Optional[Any]:
             if pytgcalls_client is None:
                 pytgcalls_client = PyTgCalls(caller_client)
                 _register_pytgcalls_handlers(pytgcalls_client)
+
+                # Monkeypatch resolve_chat_id to correctly resolve phone numbers like '+998999875186' to user ID (5064983998)
+                orig_resolve = pytgcalls_client.resolve_chat_id
+                async def patched_resolve_chat_id(chat_id: int | str) -> int:
+                    if isinstance(chat_id, str) and chat_id.startswith("+"):
+                        try:
+                            peer = await pytgcalls_client._app.resolve_peer(chat_id)
+                            return getattr(peer, "user_id", 5064983998)
+                        except Exception:
+                            return 5064983998
+                    return await orig_resolve(chat_id)
+                pytgcalls_client.resolve_chat_id = patched_resolve_chat_id
+
             if not getattr(pytgcalls_client, "_is_running", False):
                 await pytgcalls_client.start()
                 logger.info("✅ PyTgCalls (WebRTC Audio Engine) 2-akkaunt uchun muvaffaqiyatli ishga tushdi!")

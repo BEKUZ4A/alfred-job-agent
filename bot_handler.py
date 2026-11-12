@@ -294,14 +294,6 @@ async def search_channel_vacancies(channel: str, display_name: str, chat_id: str
         f"Moslik darajasi: {top_score} foiz. Batafsil ma'lumotlarni chatda ko'rib chiqishingiz mumkin."
     )
     
-    try:
-        voice_file = await generate_voice_message(voice_txt)
-        if voice_file:
-            caption = f"🎙 <b>{display_name} — Eng mos vakansiya:</b>\n<b>{top_title}</b> ({top_score}% moslik)"
-            await send_telegram_voice(voice_file, caption=caption, chat_id=chat_id)
-    except Exception as e:
-        logger.error(f"Kanal qidiruvida ovozli xabar yaratishda xato: {e}")
-        
     for i, vac in enumerate(matches[:5], start=1):
         try:
             card = format_vacancy_card(vac, rank=i)
@@ -1427,20 +1419,8 @@ async def process_telegram_update(update: Dict[str, Any], trigger_scan_callback=
                 ]
             }
 
-        if wants_voice:
-            # 1. Ovozli xabar yaratish va yuborish
-            voice_file = await generate_voice_message(ai_reply, prepare_script=True)
-            if voice_file:
-                caption = "🎙 <b>Alfred — Ovozli Javob</b>"
-                if target_vac:
-                    caption = f"🎙 <b>{target_vac.get('title')}</b> ({target_vac.get('match_score', 0)}% moslik)"
-                await send_telegram_voice(voice_file, caption=caption, chat_id=chat_id)
-
-            # 2. To'liq professional matn va tugmalarni yuborish
-            await send_telegram_message(ai_reply, chat_id=chat_id, reply_markup=reply_markup)
-        else:
-            # Oddiy matnli javob va tegishli vakansiya tugmalari
-            await send_telegram_message(ai_reply, chat_id=chat_id, reply_markup=reply_markup)
+        # Professional matn va tegishli vakansiya tugmalarini yuborish (chatga golos yuborilmaydi)
+        await send_telegram_message(ai_reply, chat_id=chat_id, reply_markup=reply_markup)
 
 
 async def run_telegram_polling(trigger_scan_callback=None):
