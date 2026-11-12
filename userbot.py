@@ -159,10 +159,14 @@ async def ensure_caller_userbot_synced(c_user: TelegramClient, c_caller: Telegra
                 logger.debug(f"Userbot import contact xatosi: {e_ci}")
 
             try:
-                caller_id = me_caller.id if me_caller else 8696382016
-                await c_user(UnblockRequest(id=caller_id))
-            except Exception as e_un:
-                logger.debug(f"Userbot unblock xatosi: {e_un}")
+                caller_ent = await c_user.get_input_entity("+998930037685")
+                await c_user(UnblockRequest(id=caller_ent))
+            except Exception:
+                try:
+                    caller_id = me_caller.id if me_caller else 8696382016
+                    await c_user(UnblockRequest(id=caller_id))
+                except Exception as e_un:
+                    logger.debug(f"Userbot unblock xatosi: {e_un}")
 
         # 2. 2-akkaunt (caller) asosiy akkauntni kontaktga qo'shadi va unblock qiladi
         if c_caller and c_caller.is_connected():
@@ -249,7 +253,11 @@ async def make_telegram_call_detailed(reason_text: str = "", force: bool = False
             max_layer=92, 
             udp_p2p=True, 
             udp_reflector=True, 
-            library_versions=["2.4.4"]
+            library_versions=[
+                "2.4.4", "2.7.7", "3.0.0", "4.0.0", "4.0.1",
+                "5.0.0", "6.0.0", "7.0.0", "8.0.0", "9.0.0",
+                "10.0.0", "11.0.0", "12.0.0", "13.0.0"
+            ]
         )
         rand_id = random.randint(1, 2**30)
 
