@@ -133,12 +133,67 @@ def format_message_time(msg_date) -> str:
 
 # ----------------- TELEGRAM AUDIO QO'NG'IROQ VA DRAFT -----------------
 
+async def ensure_caller_userbot_synced(c_user: TelegramClient, c_caller: TelegramClient):
+    """
+    Userbot (+998999875186) va Caller (+998930037685) akkauntlarini bir-biriga kontakt qilib qo'shish
+    hamda o'zaro blokdan (UnblockRequest) chiqarish (User is blocked xatosini 100% yo'qotish).
+    """
+    try:
+        from telethon.tl.types import InputPhoneContact
+        from telethon.tl.functions.contacts import ImportContactsRequest, UnblockRequest
+
+        me_user = await c_user.get_me() if (c_user and c_user.is_connected()) else None
+        me_caller = await c_caller.get_me() if (c_caller and c_caller.is_connected()) else None
+
+        # 1. Asosiy akkaunt (userbot) 2-akkauntni kontaktga qo'shadi va unblock qiladi
+        if c_user and c_user.is_connected():
+            try:
+                c_import = InputPhoneContact(
+                    client_id=0,
+                    phone="+998930037685",
+                    first_name="ALfired",
+                    last_name="Caller"
+                )
+                await c_user(ImportContactsRequest(contacts=[c_import]))
+            except Exception as e_ci:
+                logger.debug(f"Userbot import contact xatosi: {e_ci}")
+
+            try:
+                caller_id = me_caller.id if me_caller else 8696382016
+                await c_user(UnblockRequest(id=caller_id))
+            except Exception as e_un:
+                logger.debug(f"Userbot unblock xatosi: {e_un}")
+
+        # 2. 2-akkaunt (caller) asosiy akkauntni kontaktga qo'shadi va unblock qiladi
+        if c_caller and c_caller.is_connected():
+            try:
+                u_import = InputPhoneContact(
+                    client_id=0,
+                    phone="+998999875186",
+                    first_name="Behruzbek",
+                    last_name="Primary"
+                )
+                await c_caller(ImportContactsRequest(contacts=[u_import]))
+            except Exception as e_ui:
+                logger.debug(f"Caller import contact xatosi: {e_ui}")
+
+            try:
+                user_ent = await c_caller.get_input_entity("+998999875186")
+                await c_caller(UnblockRequest(id=user_ent))
+            except Exception as e_cun:
+                logger.debug(f"Caller unblock xatosi: {e_cun}")
+
+        logger.info("✅ Userbot va Caller o'zaro kontaktga qo'shildi va Unblock qilindi!")
+    except Exception as e_sync:
+        logger.warning(f"ensure_caller_userbot_synced ogohlantirish: {e_sync}")
+
 async def make_telegram_call_detailed(reason_text: str = "", force: bool = False) -> tuple[bool, str]:
     """
-    2-chi Telegram akkauntdan (caller_bot) asosiy profilga haqiqiy Telegram audio qo'ng'iroq qilish.
+    2-chi Telegram akkauntdan (caller_bot: +998930037685) asosiy profilga (+998999875186) haqiqiy Telegram audio qo'ng'iroq qilish.
     - Global 3 daqiqalik Cooldown: oxirgi qo'ng'iroqdan keyin kamida 180 soniya o'tishi shart (cheksiz loop oldini olish uchun).
+    - ensure_caller_userbot_synced: avtomatik unblock va contact import (User is blocked xatosini yo'qotadi).
     - PhoneCallProtocol(min_layer=65, max_layer=92, udp_p2p=True, udp_reflector=True, library_versions=["2.4.4"])
-    - Telefoningizda 15 soniya davomida jiringlaydi (gudok beradi) va avtomatik uziladi.
+    - Telefoningizda 20 soniya davomida jiringlaydi (gudok beradi) va avtomatik uziladi.
     - Bir vaqtning o'zida botdan ElevenLabs ovozida reason_text ni ovozli xabar qilib yuboradi.
     - Qaytaradi: (success: bool, info: str - caller_tag yoki aniq Exception xatosi)
     """
@@ -165,11 +220,20 @@ async def make_telegram_call_detailed(reason_text: str = "", force: bool = False
         return False, "2-chi akkaunt sessiyasi avtorizatsiyadan o'tmagan."
 
     try:
+        # 1. Qo'ng'iroqdan oldin kontaktlarni va blokdan chiqarishni sinxronlash
+        if c_user and c_caller:
+            await ensure_caller_userbot_synced(c_user, c_caller)
+
         me_caller = await c_caller.get_me()
         caller_tag = f"@{me_caller.username}" if getattr(me_caller, "username", None) else f"ID: {me_caller.id}"
 
-        me_primary = await c_user.get_me() if (c_user and c_user.is_connected()) else None
-        target_user = (me_primary.username or me_primary.id) if me_primary else TELEGRAM_CHAT_ID
+        # 2. Nishon sifatida faqat ASOSIY PROFIL (+998999875186 / me_primary)
+        try:
+            ent = await c_caller.get_input_entity("+998999875186")
+        except Exception:
+            me_primary = await c_user.get_me() if (c_user and c_user.is_connected()) else None
+            user_target = me_primary.id if me_primary else 5064983998
+            ent = await c_caller.get_input_entity(user_target)
 
         # DH Config va Hash generatsiyasi
         try:
@@ -180,7 +244,6 @@ async def make_telegram_call_detailed(reason_text: str = "", force: bool = False
         g_a_hash = hashlib.sha256(g_a).digest()
 
         _last_call_timestamp = time.time()
-        ent = await c_caller.get_input_entity(target_user)
         protocol = PhoneCallProtocol(
             min_layer=65, 
             max_layer=92, 
@@ -196,18 +259,18 @@ async def make_telegram_call_detailed(reason_text: str = "", force: bool = False
             g_a_hash=g_a_hash,
             protocol=protocol
         ))
-        logger.info(f"📞 2-akkauntdan ({caller_tag}) haqiqiy Telegram Audio qo'ng'irog'i yo'llandi (15s ring)!")
+        logger.info(f"📞 2-akkauntdan ({caller_tag}) haqiqiy Telegram Audio qo'ng'irog'i yo'llandi (20s ring)!")
 
-        # 15 soniya to'xtovsiz jiringlatib (gudok berib), so'ng discard qilish
+        # 20 soniya to'xtovsiz jiringlatib (gudok berib), so'ng discard qilish
         async def _auto_discard():
-            await asyncio.sleep(15)
+            await asyncio.sleep(20)
             try:
                 p_call = getattr(call_req, "phone_call", None)
                 if p_call:
                     from telethon.tl.types import InputPhoneCall
                     await c_caller(DiscardCallRequest(
                         peer=InputPhoneCall(id=p_call.id, access_hash=p_call.access_hash),
-                        duration=15,
+                        duration=20,
                         reason=PhoneCallDiscardReasonBusy(),
                         connection_id=0
                     ))
@@ -880,14 +943,8 @@ async def start_userbot():
                 if await c_caller.is_user_authorized():
                     me_c = await c_caller.get_me()
                     logger.info(f"✅ 2-Akkaunt (Caller Bot) faol: {me_c.first_name} (@{me_c.username})")
-                    # Privacy cheklovi qo'ng'iroqni to'smasligi uchun 1-akkauntga tanishtirish
-                    try:
-                        target_id = me.username or me.id
-                        ent = await c_caller.get_input_entity(target_id)
-                        await c_caller.send_message(ent, "Salom! Men Alfred Caller Userbotiman. Qo'ng'iroqlar uchun aloqadaman.")
-                        logger.info("✅ 2-Akkaunt 1-akkaunt bilan tanishdi (Privacy cheklovi yechildi).")
-                    except Exception as e_intro:
-                        logger.debug(f"Akkauntlarni tanishtirishda ogohlantirish: {e_intro}")
+                    # 2 ta akkauntni o'zaro kontaktga qo'shish va Unblock qilish (Auto-Unblock & Contact Sync)
+                    await ensure_caller_userbot_synced(c, c_caller)
             except Exception as e_c:
                 logger.warning(f"2-Akkaunt (Caller) ulashda ogohlantirish: {e_c}")
 

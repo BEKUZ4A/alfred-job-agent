@@ -924,7 +924,7 @@ async def process_telegram_update(update: Dict[str, Any], trigger_scan_callback=
                 caller_tag = call_info or "2-chi akkaunt"
                 await send_telegram_message(
                     f"📲 <b>2-chi akkauntdan ({caller_tag}) sizning Telegramingizga audio qo'ng'iroq yuborildi!</b>\n"
-                    "Qo'ng'iroq 15 soniya davomida jiringlab turadi.",
+                    "Qo'ng'iroq 20 soniya davomida jiringlab turadi.",
                     chat_id=chat_id
                 )
             else:

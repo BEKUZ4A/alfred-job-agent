@@ -574,7 +574,7 @@ async def run_gemini_react_agent(
             if call_ok:
                 return (
                     f"📲 <b>2-chi akkauntdan ({c_info}) sizning Telegramingizga audio qo'ng'iroq yuborildi!</b>\n"
-                    "Qo'ng'iroq 15 soniya davomida jiringlab turadi."
+                    "Qo'ng'iroq 20 soniya davomida jiringlab turadi."
                 )
             else:
                 return f"❌ <b>Qo'ng'iroq qilishda xatolik yuz berdi:</b>\n<code>{c_info}</code>"
