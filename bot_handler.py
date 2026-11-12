@@ -765,9 +765,11 @@ async def process_telegram_update(update: Dict[str, Any], trigger_scan_callback=
                 "freelance_uzb", "young_june", "young_intern", "ustozshogird", "it_jobs_uz", "bbcnew_2026"
             ]
             candidate_hr = None
+            from database import is_forbidden_hr_username
             for u in hr_usernames:
-                if u.lower() not in ignored_channels:
-                    candidate_hr = u.lower().strip()
+                u_clean = u.lower().strip()
+                if u_clean not in ignored_channels and not is_forbidden_hr_username(u_clean):
+                    candidate_hr = u_clean
                     break
 
             if candidate_hr:
@@ -989,6 +991,15 @@ async def process_telegram_update(update: Dict[str, Any], trigger_scan_callback=
 
         hr_user = parts[1].strip().lstrip("@").lower()
         company = " ".join(parts[2:]).strip() if len(parts) > 2 else ""
+
+        from database import is_forbidden_hr_username
+        if is_forbidden_hr_username(hr_user):
+            await send_telegram_message(
+                f"⚠️ <b>@{hr_user} — bu bot yoki tizim akkaunti!</b>\n"
+                "Botlarni HR sifatida qo'shish qat'iyan taqiqlangan (cheksiz loop xavfi oldini olish uchun).",
+                chat_id=chat_id
+            )
+            return
 
         # Bazaga saqlash
         add_tracked_hr(hr_user, company=company)

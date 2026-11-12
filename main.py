@@ -210,7 +210,12 @@ async def lifespan(app: FastAPI):
     try:
         await restore_db_backup_from_telegram()
         await restore_rules_from_telegram()
-        logger.info("Telegram Saved Messages dan DB va dinamik qoidalar tiklandi.")
+        # Qayta tiklangandan keyin botlar yoki bekuz4a_bot qolib ketgan bo'lsa darhol tozalash
+        from database import execute_query
+        execute_query("DELETE FROM tracked_hrs WHERE LOWER(username) LIKE '%bot' OR LOWER(username) IN ('me', 'ai_agents_24', 'bekuz4a_bot')", commit=True)
+        from backup_manager import sync_db_backup_to_telegram
+        await sync_db_backup_to_telegram()
+        logger.info("Telegram Saved Messages dan DB va dinamik qoidalar tiklandi va tozalandi.")
     except Exception as e_res:
         logger.warning(f"Telegram zaxirasini tiklashda ogohlantirish: {e_res}")
     
@@ -255,7 +260,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Alfred - 24/7 AI IT Recruiter",
     description="Python/Django/FastAPI/AI bo'yicha vakansiyalarni 24/7 qidiruvchi shaxsiy agent",
-    version="2.0.0",
+    version="2.1.0",
     lifespan=lifespan
 )
 
@@ -264,7 +269,7 @@ async def root():
     return {
         "status": "online",
         "agent": "Alfred 24/7 AI IT Recruiter",
-        "version": "2.0.0 (CallMeBot Purged, MTProto 2nd Account Calls Active)",
+        "version": "2.1.0 (Loop Fix & Bot HR Protection Active)",
         "bot_listener": "active (Telegram Polling)",
         "gemini_status": get_last_error(),
         "endpoints": {

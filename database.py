@@ -205,6 +205,12 @@ def init_db():
             except sqlite3.OperationalError:
                 pass
 
+        # Botlar va o'zimizning botimizni HR bazasidan 100% tozalash (Infinite loop himoyasi)
+        try:
+            cursor.execute("DELETE FROM tracked_hrs WHERE LOWER(username) LIKE '%bot' OR LOWER(username) IN ('me', 'ai_agents_24', 'bekuz4a_bot')")
+        except Exception:
+            pass
+
     conn.commit()
     conn.close()
 
@@ -373,8 +379,26 @@ def get_top_vacancies(limit: int = 5, min_score: int = 50) -> List[Dict]:
 
 # ----------------- HR KUZATUV VA MINI-CRM -----------------
 
+def is_forbidden_hr_username(username: str) -> bool:
+    """Botlar va shaxsiy akkauntlarning HR bo'lib qo'shilishini va cheksiz loopga tushishini 100% to'sish"""
+    if not username:
+        return True
+    u = str(username).strip().lstrip("@").lower()
+    if not u:
+        return True
+    # Telegram botlari har doim 'bot' bilan tugaydi
+    if u.endswith("bot") or u.endswith("_bot") or u == "bekuz4a_bot":
+        return True
+    # Shaxsiy akkauntlar va tizim nomlari
+    if u in ["me", "ai_agents_24", "self", "channel", "group", "admin"]:
+        return True
+    return False
+
 def add_tracked_hr(username: str, company: str = "", cal_event_3d: str = "", cal_event_7d: str = ""):
     username = username.strip().lstrip("@").lower()
+    if is_forbidden_hr_username(username):
+        logger.warning(f"Taqiqlangan username (@{username}) HR sifatida qo'shilmadi (bot yoki tizim akkaunti).")
+        return
     existing = get_tracked_hr(username)
     if existing:
         if is_postgres():
@@ -423,7 +447,8 @@ def get_tracked_hr(username: str) -> Optional[Dict]:
     return execute_query("SELECT * FROM tracked_hrs WHERE LOWER(username) = ?", (username,), fetch_one=True)
 
 def get_all_tracked_hrs() -> List[Dict]:
-    return execute_query("SELECT * FROM tracked_hrs ORDER BY added_at DESC", fetch_all=True) or []
+    rows = execute_query("SELECT * FROM tracked_hrs ORDER BY added_at DESC", fetch_all=True) or []
+    return [r for r in rows if not is_forbidden_hr_username(r.get("username", ""))]
 
 def update_hr_status(username: str, status: str, last_message: str = ""):
     username = username.strip().lstrip("@").lower()
@@ -548,7 +573,7 @@ def get_backup_data() -> Dict[str, Any]:
     tracked_hrs_dict = {}
     for h in hrs:
         u = h.get("username", "").strip().lstrip("@").lower()
-        if u:
+        if u and not is_forbidden_hr_username(u):
             tracked_hrs_dict[u] = {
                 "company": h.get("company", ""),
                 "last_seen_msg_id": h.get("last_seen_msg_id") or 0,
@@ -581,6 +606,8 @@ def restore_from_backup_data(data: Dict[str, Any]) -> bool:
         tracked_hrs = data.get("tracked_hrs", {})
         for u, info in tracked_hrs.items():
             u_clean = u.strip().lstrip("@").lower()
+            if is_forbidden_hr_username(u_clean):
+                continue
             existing = get_tracked_hr(u_clean)
             company = info.get("company", "")
             last_seen_id = info.get("last_seen_msg_id", 0)

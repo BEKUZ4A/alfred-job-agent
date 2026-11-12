@@ -149,10 +149,10 @@ async def make_telegram_call_detailed(reason_text: str = "") -> tuple[bool, str]
         ent = await c_caller.get_input_entity(target_user)
         protocol = PhoneCallProtocol(
             min_layer=65, 
-            max_layer=92, 
+            max_layer=93, 
             udp_p2p=True, 
             udp_reflector=True,
-            library_versions=['2.4.4']
+            library_versions=['4.0.0', '3.0.0', '2.7.7', '2.4.4', '1.0.0']
         )
         rand_id = random.randint(1, 2**30)
 
@@ -388,6 +388,10 @@ async def handle_hr_outgoing_message(
     chat_history: Optional[List[Dict[str, Any]]] = None
 ):
     """Behruzbek o'zi Telegram lichkada HR ga xabar yozganda (msg.out == True) kelishilgan vaqtni avto-aniqlash"""
+    from database import is_forbidden_hr_username
+    if is_forbidden_hr_username(hr_username):
+        return
+
     from notifier import send_telegram_message
     from ai_analyzer import analyze_user_hr_dialogue
 
@@ -441,6 +445,10 @@ async def handle_hr_incoming_message(
     3. Botda FAQAT 1 TA xabar va FAQAT 2 TA TUGMA chiqarish:
        [📤 Javob berish] va [✍️ O'zim javob berdim]
     """
+    from database import is_forbidden_hr_username
+    if is_forbidden_hr_username(hr_username):
+        return
+
     time_str = format_message_time(msg_date)
 
     from ai_analyzer import analyze_hr_message
@@ -601,6 +609,9 @@ async def continuous_reminder_loop():
 
             for hr in tracked:
                 hr_u = hr.get("username", "").strip().lstrip("@").lower()
+                from database import is_forbidden_hr_username
+                if not hr_u or is_forbidden_hr_username(hr_u):
+                    continue
                 int_iso = hr.get("interview_time") or ""
                 reminded = bool(hr.get("reminded_2min"))
                 status = hr.get("status") or "waiting"
@@ -704,8 +715,14 @@ async def check_and_auto_track_hr(sender, text: str) -> Optional[str]:
     """Lichkaga yozgan yangi odamni Auto-HR qilib kuzatuvga olish"""
     if not isinstance(sender, User):
         return None
+    # 1. Botlar va o'zimizning akkauntlarimizni aslo HR qilib qo'shmaslik (Infinite loop oldini olish)
+    if getattr(sender, "bot", False) or getattr(sender, "is_self", False):
+        return None
     username = (sender.username or "").lower().strip().lstrip("@")
     if not username:
+        return None
+    from database import is_forbidden_hr_username
+    if is_forbidden_hr_username(username):
         return None
     hr_data = get_tracked_hr(username)
     if hr_data:
@@ -742,6 +759,10 @@ async def hr_monitor_loop():
                     if not raw_user:
                         continue
                     hr_username = raw_user.lstrip("@").lower().strip()
+                    from database import is_forbidden_hr_username, delete_tracked_hr
+                    if is_forbidden_hr_username(hr_username):
+                        delete_tracked_hr(hr_username)
+                        continue
                     company = hr.get("company", "")
                     last_seen_id = hr.get("last_seen_msg_id") or 0
 
@@ -857,6 +878,11 @@ async def start_userbot():
 
                 # Auto-HR tekshiruvi (agar hali ro'yxatda bo'lmasa)
                 sender = await event.get_sender()
+                if getattr(sender, "bot", False) or getattr(sender, "is_self", False):
+                    return
+                from database import is_forbidden_hr_username
+                if username and is_forbidden_hr_username(username):
+                    return
                 if not event.out and sender:
                     auto_tracked = await check_and_auto_track_hr(sender, msg_text)
                     if auto_tracked:
